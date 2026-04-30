@@ -455,68 +455,177 @@ function FeedView({apiKey,onTickerSelect,visible}){
 
 /* ── Congress View ─────────────────────────────────── */
 function CongressView({onTickerSelect,visible}){
-  const[trades,setTrades]=useState([]);const[loading,setLoading]=useState(true);const[err,setErr]=useState("");
-  const[chamber,setChamber]=useState("all");const[tradeType,setTradeType]=useState("all");const[search,setSearch]=useState("");
+  const[trades,setTrades]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[err,setErr]=useState("");
+  const[chamber,setChamber]=useState("all");
+  const[tradeType,setTradeType]=useState("all");
+  const[search,setSearch]=useState("");
+  const[period,setPeriod]=useState("1d"); // default: yesterday
   const hasFetched=useRef(false);
+
   useEffect(()=>{
-    if(hasFetched.current)return;hasFetched.current=true;
+    if(hasFetched.current)return; hasFetched.current=true;
     (async()=>{
       const ft=(url,ms=15000)=>{const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);return fetch(url,{signal:c.signal}).finally(()=>clearTimeout(t));};
       try{
-        const[sR,hR]=await Promise.allSettled([ft(SENATE_URL).then(r=>{if(!r.ok)throw new Error();return r.json();}),ft(HOUSE_URL).then(r=>{if(!r.ok)throw new Error();return r.json();})]);
-        if(sR.status==="rejected"&&hR.status==="rejected")throw new Error("Could not load either chamber's data.");
+        const[sR,hR]=await Promise.allSettled([
+          ft(SENATE_URL).then(r=>{if(!r.ok)throw new Error();return r.json();}),
+          ft(HOUSE_URL).then(r=>{if(!r.ok)throw new Error();return r.json();}),
+        ]);
+        if(sR.status==="rejected"&&hR.status==="rejected") throw new Error("Could not load either chamber's data.");
         const gn=t=>t.senator||t.representative||[t.first_name,t.last_name].filter(Boolean).join(" ")||"Unknown";
         const all=[
           ...(sR.status==="fulfilled"?sR.value:[]).map(t=>({...t,chamber:"Senate",name:gn(t),type:t.type||t.transaction_type||""})),
-          ...(hR.status==="fulfilled"?hR.value:[]).map(t=>({...t,chamber:"House",name:gn(t),type:t.type||t.transaction_type||""})),
+          ...(hR.status==="fulfilled"?hR.value:[]).map(t=>({...t,chamber:"House", name:gn(t),type:t.type||t.transaction_type||""})),
         ].filter(t=>{const tk=(t.ticker||"").trim();return tk&&tk!=="--"&&/^[A-Z]{1,5}$/.test(tk);})
          .sort((a,b)=>new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0))
-         .slice(0,1000);
+         .slice(0,2000);
         setTrades(all);
       }catch(e){setErr(e.message||"Could not load congressional data.");}
       setLoading(false);
     })();
   },[]);
+
+  // Time period helpers
+  const PERIODS=[
+    {id:"1d",  label:"Yesterday"},
+    {id:"7d",  label:"7 Days"},
+    {id:"30d", label:"30 Days"},
+    {id:"90d", label:"90 Days"},
+    {id:"1y",  label:"1 Year"},
+    {id:"all", label:"All Time"},
+  ];
+
+  const periodCutoff=useMemo(()=>{
+    const now=new Date();
+    // "Yesterday" = calendar yesterday (trades disclosed on that date)
+    const yest=new Date(now); yest.setDate(yest.getDate()-1); yest.setHours(0,0,0,0);
+    if(period==="1d") return yest;
+    const d=new Date(now); d.setHours(0,0,0,0);
+    if(period==="7d")  { d.setDate(d.getDate()-7);   return d; }
+    if(period==="30d") { d.setDate(d.getDate()-30);  return d; }
+    if(period==="90d") { d.setDate(d.getDate()-90);  return d; }
+    if(period==="1y")  { d.setFullYear(d.getFullYear()-1); return d; }
+    return null; // all time
+  },[period]);
+
+  const getTradeDate=t=>{
+    const d=t.transaction_date||t.disclosure_date||"";
+    if(!d)return null;
+    const parsed=new Date(d);
+    return isNaN(parsed)?null:parsed;
+  };
+
   const isBuy=t=>{const ty=(t.type||"").toLowerCase();return ty.includes("purchase")||ty.includes("buy");};
   const pc=p=>{const l=(p||"").toLowerCase();return l.includes("dem")?"var(--blue)":l.includes("rep")?"var(--red)":"var(--t2)";};
   const pb=p=>{const l=(p||"").toLowerCase();return l.includes("dem")?"var(--blue-bg)":l.includes("rep")?"var(--red-bg)":"var(--surface2)";};
+
   const filtered=useMemo(()=>{
     const s=search.toLowerCase();
     return trades.filter(t=>{
+      // Period filter
+      if(periodCutoff){
+        const d=getTradeDate(t);
+        if(!d||d<periodCutoff)return false;
+        // For "yesterday" specifically, only show that exact day
+        if(period==="1d"){
+          const yestEnd=new Date(periodCutoff); yestEnd.setDate(yestEnd.getDate()+1);
+          if(d>=yestEnd)return false;
+        }
+      }
       if(chamber!=="all"&&t.chamber!==chamber)return false;
       if(tradeType==="buy"&&!isBuy(t))return false;
       if(tradeType==="sell"&&isBuy(t))return false;
       if(s&&!t.ticker?.toLowerCase().includes(s)&&!(t.name||"").toLowerCase().includes(s))return false;
       return true;
     });
-  },[trades,chamber,tradeType,search]);
-  const buyCount=useMemo(()=>filtered.filter(t=>isBuy(t)).length,[filtered]);
+  },[trades,period,periodCutoff,chamber,tradeType,search]);
+
+  const buyCount =useMemo(()=>filtered.filter(t=> isBuy(t)).length,[filtered]);
   const sellCount=useMemo(()=>filtered.filter(t=>!isBuy(t)).length,[filtered]);
+
+  // Most recent trade date in the dataset
+  const mostRecentDate=useMemo(()=>{
+    if(!trades.length)return null;
+    const d=getTradeDate(trades[0]);
+    return d?d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):null;
+  },[trades]);
+
+  // Yesterday's date label
+  const yesterdayLabel=useMemo(()=>{
+    const d=new Date(); d.setDate(d.getDate()-1);
+    return d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+  },[]);
+
   return <div style={{display:visible?"block":"none"}}>
     <header style={{padding:"max(env(safe-area-inset-top),20px) 20px 14px",background:"var(--bg)",position:"sticky",top:0,zIndex:100,borderBottom:"1px solid var(--border)"}}>
+      {/* Title row */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div><div style={{fontFamily:"var(--fd)",fontSize:28,fontWeight:500,letterSpacing:"-.3px",lineHeight:1}}>Congress Trades</div><div style={{fontSize:11,color:"var(--t2)",marginTop:3}}>STOCK Act disclosures · Updated daily</div></div>
+        <div>
+          <div style={{fontFamily:"var(--fd)",fontSize:28,fontWeight:500,letterSpacing:"-.3px",lineHeight:1}}>Congress Trades</div>
+          <div style={{fontSize:11,color:"var(--t2)",marginTop:3}}>
+            STOCK Act disclosures
+            {mostRecentDate&&<span style={{color:"var(--t3)"}}> · Latest: {mostRecentDate}</span>}
+          </div>
+        </div>
         <div style={{display:"flex",gap:6}}>
-          <div style={{textAlign:"center",background:"var(--green-bg)",border:"1px solid var(--green-bd)",borderRadius:"var(--rs)",padding:"4px 10px"}}><div style={{fontSize:16,fontWeight:600,color:"var(--green)",fontFamily:"var(--fd)"}}>{buyCount}</div><div style={{fontSize:9,color:"var(--green)",fontWeight:600,letterSpacing:".05em"}}>BUYS</div></div>
-          <div style={{textAlign:"center",background:"var(--red-bg)",border:"1px solid var(--red-bd)",borderRadius:"var(--rs)",padding:"4px 10px"}}><div style={{fontSize:16,fontWeight:600,color:"var(--red)",fontFamily:"var(--fd)"}}>{sellCount}</div><div style={{fontSize:9,color:"var(--red)",fontWeight:600,letterSpacing:".05em"}}>SELLS</div></div>
+          <div style={{textAlign:"center",background:"var(--green-bg)",border:"1px solid var(--green-bd)",borderRadius:"var(--rs)",padding:"4px 10px"}}>
+            <div style={{fontSize:16,fontWeight:600,color:"var(--green)",fontFamily:"var(--fd)"}}>{buyCount}</div>
+            <div style={{fontSize:9,color:"var(--green)",fontWeight:600,letterSpacing:".05em"}}>BUYS</div>
+          </div>
+          <div style={{textAlign:"center",background:"var(--red-bg)",border:"1px solid var(--red-bd)",borderRadius:"var(--rs)",padding:"4px 10px"}}>
+            <div style={{fontSize:16,fontWeight:600,color:"var(--red)",fontFamily:"var(--fd)"}}>{sellCount}</div>
+            <div style={{fontSize:9,color:"var(--red)",fontWeight:600,letterSpacing:".05em"}}>SELLS</div>
+          </div>
         </div>
       </div>
-      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or name…" style={{width:"100%",padding:"9px 12px",borderRadius:"var(--rs)",border:"1px solid var(--border)",background:"var(--surface)",color:"var(--t1)",fontSize:13,outline:"none",marginBottom:10}}/>
+
+      {/* Time period pills */}
+      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:10,scrollbarWidth:"none"}}>
+        {PERIODS.map(p=>(
+          <FPill key={p.id} active={period===p.id} onClick={()=>setPeriod(p.id)}>
+            {p.id==="1d"?yesterdayLabel:p.label}
+          </FPill>
+        ))}
+      </div>
+
+      {/* Search */}
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or name…"
+        style={{width:"100%",padding:"9px 12px",borderRadius:"var(--rs)",border:"1px solid var(--border)",background:"var(--surface)",color:"var(--t1)",fontSize:13,outline:"none",marginBottom:10}}/>
+
+      {/* Chamber + trade type filters */}
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-        {[["all","Both Chambers"],["Senate","Senate"],["House","House"]].map(([v,l])=><FPill key={v} active={chamber===v} onClick={()=>setChamber(v)}>{l}</FPill>)}
+        {[["all","Both"],["Senate","Senate"],["House","House"]].map(([v,l])=><FPill key={v} active={chamber===v} onClick={()=>setChamber(v)}>{l}</FPill>)}
         <div style={{width:1,background:"var(--border)",margin:"0 2px"}}/>
-        {[["all","All Trades"],["buy","Buys"],["sell","Sells"]].map(([v,l])=><FPill key={v} active={tradeType===v} onClick={()=>setTradeType(v)}>{l}</FPill>)}
+        {[["all","All"],["buy","Buys"],["sell","Sells"]].map(([v,l])=><FPill key={v} active={tradeType===v} onClick={()=>setTradeType(v)}>{l}</FPill>)}
       </div>
     </header>
+
     <div style={{padding:"12px 20px"}}>
       {loading&&<div style={{display:"flex",flexDirection:"column",gap:10}}>{[...Array(6)].map((_,i)=><div key={i} className="sk" style={{height:80,animationDelay:`${i*.07}s`}}/>)}</div>}
       {err&&<div style={{textAlign:"center",padding:"40px 0",color:"var(--t2)"}}><div style={{fontSize:32,marginBottom:8}}>🏛</div><p>{err}</p></div>}
-      {!loading&&!err&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"var(--t2)"}}><div style={{fontSize:32,marginBottom:8}}>🔍</div><p>No trades match your filters</p></div>}
+
+      {/* Empty state — helpful message for yesterday with suggestion to expand */}
+      {!loading&&!err&&filtered.length===0&&(
+        <div style={{textAlign:"center",padding:"40px 20px",color:"var(--t2)"}}>
+          <div style={{fontSize:32,marginBottom:12}}>📭</div>
+          {period==="1d"
+            ? <><p style={{fontSize:14,marginBottom:8}}>No trades disclosed {yesterdayLabel}</p><p style={{fontSize:12,color:"var(--t3)",marginBottom:16}}>Congress often discloses trades in batches — try a wider window.</p><button onClick={()=>setPeriod("7d")} style={{padding:"8px 20px",borderRadius:99,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--t1)",fontSize:12,fontWeight:500,cursor:"pointer"}}>Show Last 7 Days</button></>
+            : <p style={{fontSize:13}}>No trades match your filters</p>
+          }
+        </div>
+      )}
+
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {filtered.slice(0,100).map((t,i)=>{
+        {filtered.slice(0,150).map((t,i)=>{
           const buy=isBuy(t);
-          return <button key={`${t.ticker}-${t.transaction_date||t.disclosure_date}-${i}`} onClick={()=>onTickerSelect(t.ticker,{sentiment:buy?"bullish":"bearish",text:`${t.name} ${buy?"purchased":"sold"} ${t.amount||"an undisclosed amount"} of ${t.ticker}`,source:`${t.chamber} · ${t.transaction_date||t.disclosure_date}`})}
-            className="fi" style={{display:"flex",alignItems:"center",gap:12,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:"12px 14px",cursor:"pointer",width:"100%",textAlign:"left",boxShadow:"var(--sh)",animationDelay:`${Math.min(i,.15)*.02}s`}}>
+          const tradeDate=t.transaction_date||t.disclosure_date;
+          return <button
+            key={`${t.ticker}-${tradeDate}-${t.name}-${i}`}
+            onClick={()=>onTickerSelect(t.ticker,{sentiment:buy?"bullish":"bearish",text:`${t.name} ${buy?"purchased":"sold"} ${t.amount||"an undisclosed amount"} of ${t.ticker}`,source:`${t.chamber} · ${tradeDate}`})}
+            className="fi"
+            style={{display:"flex",alignItems:"center",gap:12,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:"12px 14px",cursor:"pointer",width:"100%",textAlign:"left",boxShadow:"var(--sh)",animationDelay:`${Math.min(i,.2)*.02}s`}}>
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flexShrink:0}}>
               <div style={{width:8,height:8,borderRadius:"50%",background:buy?"var(--green)":"var(--red)"}}/>
               <div style={{fontSize:8,fontWeight:700,color:buy?"var(--green)":"var(--red)",letterSpacing:".05em"}}>{buy?"BUY":"SELL"}</div>
@@ -528,15 +637,22 @@ function CongressView({onTickerSelect,visible}){
                 <span style={{fontSize:10,color:"var(--t3)",padding:"2px 7px",borderRadius:99,border:"1px solid var(--border)",background:"var(--surface2)"}}>{t.chamber}</span>
               </div>
               <div style={{fontSize:12,color:"var(--t1)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</div>
-              <div style={{fontSize:10,color:"var(--t2)",marginTop:2}}>{t.asset_description&&t.asset_description!==t.ticker?t.asset_description:""}{t.amount?` · ${t.amount}`:""}</div>
+              <div style={{fontSize:10,color:"var(--t2)",marginTop:2}}>
+                {t.asset_description&&t.asset_description!==t.ticker?t.asset_description+"  ·  ":""}
+                {t.amount||""}
+              </div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
-              <div style={{fontSize:10,color:"var(--t3)"}}>{t.transaction_date||t.disclosure_date}</div>
+              <div style={{fontSize:10,color:"var(--t3)"}}>{tradeDate}</div>
               <div style={{fontSize:12,color:"var(--t3)",marginTop:4}}>›</div>
             </div>
           </button>;
         })}
-        {filtered.length>100&&<div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:"var(--t3)"}}>Showing 100 of {filtered.length} — search to narrow</div>}
+        {filtered.length>150&&(
+          <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:"var(--t3)"}}>
+            Showing 150 of {filtered.length} trades — use search to narrow results
+          </div>
+        )}
       </div>
     </div>
   </div>;
