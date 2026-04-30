@@ -62,12 +62,18 @@ const UI_KEY      = "hr-ui-v5";
 const SENATE_URL  = "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json";
 const HOUSE_URL   = "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json";
 const DEFAULT_SOURCES = [
-  {type:"reddit",id:"stocks",label:"r/stocks"},
-  {type:"reddit",id:"wallstreetbets",label:"r/wallstreetbets"},
-  {type:"reddit",id:"investing",label:"r/investing"},
-  {type:"reddit",id:"pennystocks",label:"r/pennystocks"},
-  {type:"reddit",id:"smallcapstocks",label:"r/smallcapstocks"},
-  {type:"reddit",id:"Daytrading",label:"r/Daytrading"},
+  // Reddit communities
+  {type:"reddit", id:"stocks",            label:"r/stocks"},
+  {type:"reddit", id:"wallstreetbets",    label:"r/wallstreetbets"},
+  {type:"reddit", id:"investing",         label:"r/investing"},
+  {type:"reddit", id:"pennystocks",       label:"r/pennystocks"},
+  {type:"reddit", id:"smallcapstocks",    label:"r/smallcapstocks"},
+  {type:"reddit", id:"Daytrading",        label:"r/Daytrading"},
+  // Financial news & discussion
+  {type:"url", url:"https://stocktwits.com/stocks",     label:"StockTwits"},
+  {type:"url", url:"https://finance.yahoo.com",         label:"Yahoo Finance"},
+  {type:"url", url:"https://www.marketwatch.com",       label:"MarketWatch"},
+  {type:"url", url:"https://seekingalpha.com",          label:"Seeking Alpha"},
 ];
 const DEFAULT_UI = {title:"Hype Radar",titleSize:28,subtitle:"Retail sentiment · all price ranges",subtitleSize:11};
 
@@ -428,26 +434,127 @@ function FeedView({apiKey,onTickerSelect,visible}){
         {analysis.trending_themes?.length>0&&<div><SL>Trending Themes</SL><div style={{display:"flex",flexWrap:"wrap",gap:8}}>{analysis.trending_themes.map(t=><span key={t} style={{padding:"5px 12px",borderRadius:99,border:"1px solid var(--border)",background:"var(--surface)",fontSize:12}}>#{t}</span>)}</div></div>}
         <div><SL>Sources</SL><div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",overflow:"hidden",boxShadow:"var(--sh)"}}>{[["Reddit sources",""+sources.filter(s=>s.type==="reddit").length],["Web sources",""+sources.filter(s=>s.type==="url").length],["Total",""+sources.length]].map(([k,v],i,a)=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"12px 16px",borderBottom:i<a.length-1?"1px solid var(--border)":"none"}}><span style={{fontSize:13,color:"var(--t2)"}}>{k}</span><span style={{fontSize:13,fontWeight:500}}>{v}</span></div>)}</div></div>
       </div>}
-      {tab==="sources"&&<div className="fi" style={{display:"flex",flexDirection:"column",gap:14}}>
-        <div><SL>Tracked Sources</SL><div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",overflow:"hidden",boxShadow:"var(--sh)"}}>
-          {sources.map((src,i)=><div key={srcKey(src)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<sources.length-1?"1px solid var(--border)":"none"}}>
-            <span style={{fontSize:9,fontWeight:600,letterSpacing:".05em",textTransform:"uppercase",padding:"2px 7px",borderRadius:4,color:src.type==="url"?"var(--blue)":"var(--green)",background:src.type==="url"?"var(--blue-bg)":"var(--green-bg)"}}>{src.type==="url"?"Web":"Reddit"}</span>
-            <div style={{flex:1,minWidth:0}}><div style={{fontSize:13}}>{src.label}</div><div style={{fontSize:10,color:"var(--t3)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{src.type==="url"?src.url:`reddit.com/r/${src.id}`}</div></div>
-            {sources.length>1&&<button onClick={()=>setSources(sources.filter(s=>srcKey(s)!==srcKey(src)))} style={{fontSize:18,color:"var(--t3)",background:"none",border:"none",cursor:"pointer",padding:"2px 4px"}}>×</button>}
-          </div>)}
-        </div></div>
-        <div><SL>Add Source</SL><div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:16,boxShadow:"var(--sh)"}}>
-          <p style={{fontSize:12,color:"var(--t2)",marginBottom:12,lineHeight:1.6}}>Paste any URL or subreddit — StockTwits, Seeking Alpha, Yahoo Finance, or r/name.</p>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{["stocktwits.com","seekingalpha.com","r/wallstreetbets","r/ValueInvesting"].map(ex=><button key={ex} onClick={()=>{setInputVal(ex);setInputErr("");inputRef.current?.focus();}} style={{fontSize:10,color:"var(--t2)",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:99,padding:"3px 10px",cursor:"pointer"}}>{ex}</button>)}</div>
-          <input ref={inputRef} value={inputVal} onChange={e=>{setInputVal(e.target.value);setInputErr("");}} onKeyDown={e=>{if(e.key==="Enter")handleAdd();}} placeholder="r/WallStreetBets or stocktwits.com" style={{width:"100%",padding:"10px 12px",borderRadius:"var(--rs)",border:`1px solid ${inputErr?"var(--red-bd)":"var(--border)"}`,background:"var(--bg)",color:"var(--t1)",fontSize:13,outline:"none",marginBottom:inputErr?6:12}}/>
-          {inputErr&&<div style={{fontSize:11,color:"var(--red)",marginBottom:10}}>{inputErr}</div>}
-          <button onClick={handleAdd} style={{width:"100%",padding:"11px",borderRadius:"var(--rs)",border:"none",background:"var(--t1)",color:"var(--surface)",fontSize:13,fontWeight:500,cursor:"pointer"}}>Add &amp; Rescan</button>
-        </div></div>
+      {tab==="sources"&&<div className="fi" style={{display:"flex",flexDirection:"column",gap:16}}>
+
+        {/* Active sources */}
+        <div>
+          <SL>Active Sources ({sources.length})</SL>
+          <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",overflow:"hidden",boxShadow:"var(--sh)"}}>
+            {sources.map((src,i)=><div key={srcKey(src)} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:i<sources.length-1?"1px solid var(--border)":"none"}}>
+              <span style={{fontSize:9,fontWeight:600,letterSpacing:".05em",textTransform:"uppercase",padding:"2px 7px",borderRadius:4,flexShrink:0,color:src.type==="url"?"var(--blue)":"var(--green)",background:src.type==="url"?"var(--blue-bg)":"var(--green-bg)"}}>{src.type==="url"?"WEB":"SUB"}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13}}>{src.label}</div>
+                <div style={{fontSize:10,color:"var(--t3)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{src.type==="url"?src.url:`reddit.com/r/${src.id}`}</div>
+              </div>
+              {sources.length>1&&<button onClick={()=>setSources(sources.filter(s=>srcKey(s)!==srcKey(src)))} style={{fontSize:18,color:"var(--t3)",background:"none",border:"none",cursor:"pointer",padding:"2px 6px",flexShrink:0}}>×</button>}
+            </div>)}
+          </div>
+        </div>
+
+        {/* Quick Add — suggested sources by category */}
+        {(()=>{
+          const SUGGESTED=[
+            {category:"📰 Financial News", sources:[
+              {type:"url",url:"https://www.benzinga.com",              label:"Benzinga"},
+              {type:"url",url:"https://www.thestreet.com",             label:"The Street"},
+              {type:"url",url:"https://www.fool.com",                  label:"Motley Fool"},
+              {type:"url",url:"https://investors.com",                 label:"Investor's Business Daily"},
+              {type:"url",url:"https://www.barrons.com",               label:"Barron's"},
+              {type:"url",url:"https://www.cnbc.com/markets",          label:"CNBC Markets"},
+              {type:"url",url:"https://www.bloomberg.com/markets",     label:"Bloomberg Markets"},
+            ]},
+            {category:"💬 Stock Discussion", sources:[
+              {type:"url",url:"https://stocktwits.com/stocks",         label:"StockTwits"},
+              {type:"url",url:"https://seekingalpha.com",              label:"Seeking Alpha"},
+              {type:"url",url:"https://finance.yahoo.com",             label:"Yahoo Finance"},
+              {type:"url",url:"https://www.marketwatch.com",           label:"MarketWatch"},
+              {type:"url",url:"https://finviz.com",                    label:"Finviz"},
+              {type:"url",url:"https://www.tradingview.com/ideas",     label:"TradingView Ideas"},
+            ]},
+            {category:"🔬 Research & Analysis", sources:[
+              {type:"url",url:"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent", label:"SEC Filings"},
+              {type:"url",url:"https://simplywall.st",                 label:"Simply Wall St"},
+              {type:"url",url:"https://www.macrotrends.net",           label:"Macro Trends"},
+              {type:"url",url:"https://unusualwhales.com",             label:"Unusual Whales"},
+              {type:"url",url:"https://www.tipranks.com",              label:"TipRanks"},
+              {type:"url",url:"https://fintel.io",                     label:"Fintel"},
+            ]},
+            {category:"🦎 Reddit Communities", sources:[
+              {type:"reddit",id:"options",              label:"r/options"},
+              {type:"reddit",id:"ValueInvesting",       label:"r/ValueInvesting"},
+              {type:"reddit",id:"SecurityAnalysis",     label:"r/SecurityAnalysis"},
+              {type:"reddit",id:"StockMarket",          label:"r/StockMarket"},
+              {type:"reddit",id:"swingtrading",         label:"r/swingtrading"},
+              {type:"reddit",id:"RobinhoodPennyStocks", label:"r/RobinhoodPennyStocks"},
+              {type:"reddit",id:"thetagang",            label:"r/thetagang"},
+              {type:"reddit",id:"dividends",            label:"r/dividends"},
+            ]},
+          ];
+
+          const isAdded = src => sources.some(s=>srcKey(s)===srcKey(src));
+
+          return <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <SL>Quick Add</SL>
+            {SUGGESTED.map(group=>(
+              <div key={group.category}>
+                <div style={{fontSize:11,fontWeight:500,color:"var(--t2)",marginBottom:8}}>{group.category}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {group.sources.map(src=>{
+                    const added=isAdded(src);
+                    return <div key={srcKey(src)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--rs)",boxShadow:"var(--sh)"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:400}}>{src.label}</div>
+                        <div style={{fontSize:10,color:"var(--t3)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{src.type==="url"?src.url:`reddit.com/r/${src.id}`}</div>
+                      </div>
+                      <button
+                        onClick={()=>{
+                          if(added){
+                            setSources(sources.filter(s=>srcKey(s)!==srcKey(src)));
+                          } else {
+                            const next=[...sources,src];
+                            setSources(next);
+                            refresh(next);
+                          }
+                        }}
+                        style={{
+                          flexShrink:0,
+                          padding:"4px 12px",
+                          borderRadius:99,
+                          border:`1px solid ${added?"var(--red-bd)":"var(--green-bd)"}`,
+                          background:added?"var(--red-bg)":"var(--green-bg)",
+                          color:added?"var(--red)":"var(--green)",
+                          fontSize:11,
+                          fontWeight:600,
+                          cursor:"pointer",
+                        }}>
+                        {added?"Remove":"+ Add"}
+                      </button>
+                    </div>;
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>;
+        })()}
+
+        {/* Custom URL input */}
+        <div>
+          <SL>Add Custom Source</SL>
+          <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:16,boxShadow:"var(--sh)"}}>
+            <p style={{fontSize:12,color:"var(--t2)",marginBottom:12,lineHeight:1.6}}>Paste any URL or subreddit not listed above.</p>
+            <input ref={inputRef} value={inputVal} onChange={e=>{setInputVal(e.target.value);setInputErr("");}} onKeyDown={e=>{if(e.key==="Enter")handleAdd();}} placeholder="r/WallStreetBets or any URL…" style={{width:"100%",padding:"10px 12px",borderRadius:"var(--rs)",border:`1px solid ${inputErr?"var(--red-bd)":"var(--border)"}`,background:"var(--bg)",color:"var(--t1)",fontSize:13,outline:"none",marginBottom:inputErr?6:12}}/>
+            {inputErr&&<div style={{fontSize:11,color:"var(--red)",marginBottom:10}}>{inputErr}</div>}
+            <button onClick={handleAdd} style={{width:"100%",padding:"11px",borderRadius:"var(--rs)",border:"none",background:"var(--t1)",color:"var(--surface)",fontSize:13,fontWeight:500,cursor:"pointer"}}>Add &amp; Rescan</button>
+          </div>
+        </div>
+
+        {/* API key management */}
         <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:16,boxShadow:"var(--sh)"}}>
           <div style={{fontSize:13,fontWeight:500,marginBottom:6}}>API Key</div>
           <div style={{fontSize:12,color:"var(--t2)",marginBottom:12,lineHeight:1.5}}>Stored locally. Never sent anywhere except Anthropic.</div>
           <button onClick={()=>{if(confirm("Clear API key?")){{localStorage.removeItem(APIKEY_KEY);window.location.reload();}}}} style={{width:"100%",padding:"10px",borderRadius:"var(--rs)",border:"1px solid var(--red-bd)",background:"var(--red-bg)",color:"var(--red)",fontSize:12,fontWeight:500,cursor:"pointer"}}>Clear API Key</button>
         </div>
+
       </div>}
     </div>
   </div>;
@@ -467,11 +574,17 @@ function CongressView({onTickerSelect,visible}){
   useEffect(()=>{
     if(hasFetched.current)return; hasFetched.current=true;
     (async()=>{
-      const ft=(url,ms=15000)=>{const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);return fetch(url,{signal:c.signal}).finally(()=>clearTimeout(t));};
+      // Fetch via proxy to avoid CORS issues with S3
+      const proxyFetch = (url) => fetch("/.netlify/functions/claude", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-proxy-url": url },
+        body: "{}",
+      }).then(r=>r.json());
+
       try{
         const[sR,hR]=await Promise.allSettled([
-          ft(SENATE_URL).then(r=>{if(!r.ok)throw new Error();return r.json();}),
-          ft(HOUSE_URL).then(r=>{if(!r.ok)throw new Error();return r.json();}),
+          proxyFetch(SENATE_URL),
+          proxyFetch(HOUSE_URL),
         ]);
         if(sR.status==="rejected"&&hR.status==="rejected") throw new Error("Could not load either chamber's data.");
         const gn=t=>t.senator||t.representative||[t.first_name,t.last_name].filter(Boolean).join(" ")||"Unknown";
