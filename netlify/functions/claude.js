@@ -28,16 +28,29 @@ exports.handler = async (event) => {
         headers: { "accept": "application/json" },
       };
       const req = https.request(options, (res) => {
-        let data = "";
-        res.on("data", chunk => { data += chunk; });
+        const chunks = [];
+        let totalSize = 0;
+        const MAX = 5 * 1024 * 1024; // 5MB limit
+
+        res.on("data", chunk => {
+          totalSize += chunk.length;
+          if (totalSize <= MAX) chunks.push(chunk);
+        });
         res.on("end", () => {
-          resolve({ statusCode: res.statusCode, headers, body: data });
+          try {
+            const raw = Buffer.concat(chunks).toString("utf8");
+            // Validate it parses as JSON
+            JSON.parse(raw);
+            resolve({ statusCode: 200, headers, body: raw });
+          } catch(e) {
+            resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "Failed to parse response: " + e.message }) });
+          }
         });
       });
       req.on("error", err => {
         resolve({ statusCode: 500, headers, body: JSON.stringify({ error: err.message }) });
       });
-      req.setTimeout(20000, () => {
+      req.setTimeout(25000, () => {
         req.destroy();
         resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "Timed out fetching data" }) });
       });
