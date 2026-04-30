@@ -78,9 +78,9 @@ const DEFAULT_SOURCES = [
 const DEFAULT_UI = {title:"Hype Radar",titleSize:28,subtitle:"Retail sentiment · all price ranges",subtitleSize:11};
 
 /* ── Prompts ───────────────────────────────────────── */
-const ANALYSIS_PROMPT = `You are a financial analyst specializing in retail investor sentiment. Based on your knowledge of these communities, identify the most-discussed tickers and return ONLY a valid JSON object — no markdown, no text outside the JSON:
-{"tickers":[{"symbol":"AAPL","mentions":5,"sentiment":"bullish","context":"brief reason","source":"r/sub","cross_sub_count":2,"momentum":"rising"}],"summary":"2-3 sentence narrative","trending_themes":["theme1","theme2"],"overall_sentiment":"bullish","top_posts":[{"title":"post title","source":"r/sub","score":1200,"comments":340}]}
-Rules: real tickers only (1-5 letters). Exclude: DD OP AI IMO CEO IPO USA ETF WSB APE YOLO FOMO SEC FDA IRS EOD ATH. Max 10 tickers, 5 posts. overall_sentiment: bullish|bearish|neutral|mixed. momentum: rising|stable|cooling. Return ONLY JSON.`;
+const ANALYSIS_PROMPT = `You are a financial analyst specializing in retail investor sentiment. You will be given a list of communities and websites to analyze. For each source provided, draw on your knowledge of what is typically discussed there and what stocks are trending. Return ONLY a single valid JSON object — no markdown, no text outside the JSON:
+{"tickers":[{"symbol":"AAPL","mentions":5,"sentiment":"bullish","context":"brief reason why people are bullish or bearish","source":"where this is being discussed","cross_sub_count":2,"momentum":"rising"}],"summary":"2-3 sentence narrative covering the key themes and most hyped stocks across ALL the provided sources","trending_themes":["theme1","theme2","theme3"],"overall_sentiment":"bullish","top_posts":[{"title":"representative post or article title","source":"r/sub or site name","score":1200,"comments":340}]}
+Rules: real tickers only (1-5 letters). Exclude noise words: DD OP AI IMO CEO IPO USA ETF WSB APE YOLO FOMO SEC FDA IRS EOD ATH. Max 10 tickers, 5 top_posts. overall_sentiment: bullish|bearish|neutral|mixed. momentum: rising|stable|cooling. Cover BOTH Reddit communities AND any web sources provided. Return ONLY JSON.`;
 
 const STOCK_PROMPT = `You are a financial analyst. Provide a comprehensive analysis for the given stock ticker using your training knowledge. Return ONLY a valid JSON object — no markdown, no text outside the JSON:
 {"symbol":"AAPL","company_name":"Apple Inc.","exchange":"NASDAQ","current_price":185.50,"price_change":2.30,"price_change_pct":1.26,"market_cap":"2.85T","description":"One sentence about what this company does.","sector":"Technology","industry":"Consumer Electronics","price_history":[180.2,181.5,179.8,183.0,185.5],"trading_signals":{"short_interest_pct":4.2,"days_to_cover":2.1,"float_shares":"15.4M","float_category":"small","volume_today":"52.3M","volume_avg_30d":"22.8M","volume_ratio":2.3,"rsi_14":67,"rsi_signal":"neutral","ma_50":178.20,"ma_200":172.50,"ma_cross_signal":"golden cross","distance_from_52w_high_pct":-6.5,"distance_from_52w_low_pct":12.8},"catalysts":{"news":[{"headline":"Relevant known headline","date":"2025-01-15","source":"Source","sentiment":"positive"}],"next_earnings":"2025-02-01","upcoming_events":["Known event"]},"insider_activity":{"recent_buys":[],"recent_sells":[],"net_signal":"neutral","summary":"Known insider activity summary."},"risk_flags":{"reverse_split_history":false,"reverse_split_count":0,"dilution_risk":"low","recent_share_issuance":false,"listing_type":"NASDAQ","is_otc":false,"cash_position":"$29B","months_runway":null,"sec_investigation":false,"recent_trading_halts":false,"flags":[]},"key_stats":{"week_52_high":198.23,"week_52_low":164.08,"avg_volume":"52.3M","pe_ratio":28.5,"revenue":"383B","employees":"161,000","founded":"1976"}}
@@ -341,7 +341,7 @@ function FeedView({apiKey,onTickerSelect,visible}){
   const refresh=useCallback(async override=>{
     if(stage==="analyzing")return;
     const target=override||sources;
-    setStage("analyzing");setStageTxt("Analyzing sentiment…");setErrMsg("");
+    setStage("analyzing");setStageTxt(`Analyzing ${target.length} source${target.length>1?"s":""}…`);setErrMsg("");
     try{
       const srcList=[...target.filter(s=>s.type==="reddit").map(s=>`r/${s.id}`),...target.filter(s=>s.type==="url").map(s=>s.label)].join(", ");
       const data=await callClaude(apiKey,{max_tokens:2000,system:ANALYSIS_PROMPT,messages:[{role:"user",content:`Analyze current retail investor sentiment and trending stocks across these communities: ${srcList}. Return the JSON analysis.`}]});
@@ -436,6 +436,17 @@ function FeedView({apiKey,onTickerSelect,visible}){
       </div>}
       {tab==="sources"&&<div className="fi" style={{display:"flex",flexDirection:"column",gap:16}}>
 
+        {/* Rescan banner */}
+        <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--r)",padding:"12px 16px",boxShadow:"var(--sh)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:500}}>Sync tabs with sources</div>
+            <div style={{fontSize:11,color:"var(--t2)",marginTop:2}}>Tickers, Posts & Intel reflect the last scan. Add or remove sources then rescan.</div>
+          </div>
+          <button onClick={()=>refresh()} disabled={isLoading} style={{flexShrink:0,padding:"8px 16px",borderRadius:99,border:"none",background:isLoading?"var(--border)":"var(--t1)",color:"var(--surface)",fontSize:12,fontWeight:600,cursor:isLoading?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
+            {isLoading?<span style={{display:"flex",alignItems:"center",gap:6}}><Spinner size={11}/>Scanning…</span>:"↻ Rescan Now"}
+          </button>
+        </div>
+
         {/* Active sources */}
         <div>
           <SL>Active Sources ({sources.length})</SL>
@@ -446,7 +457,7 @@ function FeedView({apiKey,onTickerSelect,visible}){
                 <div style={{fontSize:13}}>{src.label}</div>
                 <div style={{fontSize:10,color:"var(--t3)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{src.type==="url"?src.url:`reddit.com/r/${src.id}`}</div>
               </div>
-              {sources.length>1&&<button onClick={()=>setSources(sources.filter(s=>srcKey(s)!==srcKey(src)))} style={{fontSize:18,color:"var(--t3)",background:"none",border:"none",cursor:"pointer",padding:"2px 6px",flexShrink:0}}>×</button>}
+              {sources.length>1&&<button onClick={()=>{const next=sources.filter(s=>srcKey(s)!==srcKey(src));setSources(next);refresh(next);}} style={{fontSize:18,color:"var(--t3)",background:"none",border:"none",cursor:"pointer",padding:"2px 6px",flexShrink:0}}>×</button>}
             </div>)}
           </div>
         </div>
@@ -509,7 +520,9 @@ function FeedView({apiKey,onTickerSelect,visible}){
                       <button
                         onClick={()=>{
                           if(added){
-                            setSources(sources.filter(s=>srcKey(s)!==srcKey(src)));
+                            const next=sources.filter(s=>srcKey(s)!==srcKey(src));
+                            setSources(next);
+                            refresh(next);
                           } else {
                             const next=[...sources,src];
                             setSources(next);
@@ -588,9 +601,26 @@ function CongressView({onTickerSelect,visible}){
         ]);
         if(sR.status==="rejected"&&hR.status==="rejected") throw new Error("Could not load either chamber's data.");
         const gn=t=>t.senator||t.representative||[t.first_name,t.last_name].filter(Boolean).join(" ")||"Unknown";
+
+        // Safely extract array from response — handles plain array or wrapped {data:[...]}
+        const toArray = v => {
+          if (!v) return [];
+          if (Array.isArray(v)) return v;
+          if (Array.isArray(v.data)) return v.data;
+          if (Array.isArray(v.transactions)) return v.transactions;
+          // Try to find any array property
+          const arr = Object.values(v).find(x => Array.isArray(x));
+          return arr || [];
+        };
+
+        const senateRaw = sR.status==="fulfilled" ? toArray(sR.value) : [];
+        const houseRaw  = hR.status==="fulfilled" ? toArray(hR.value) : [];
+
+        if(!senateRaw.length && !houseRaw.length) throw new Error("Received empty data from both chambers.");
+
         const all=[
-          ...(sR.status==="fulfilled"?sR.value:[]).map(t=>({...t,chamber:"Senate",name:gn(t),type:t.type||t.transaction_type||""})),
-          ...(hR.status==="fulfilled"?hR.value:[]).map(t=>({...t,chamber:"House", name:gn(t),type:t.type||t.transaction_type||""})),
+          ...senateRaw.map(t=>({...t,chamber:"Senate",name:gn(t),type:t.type||t.transaction_type||""})),
+          ...houseRaw.map(t=>({...t,chamber:"House", name:gn(t),type:t.type||t.transaction_type||""})),
         ].filter(t=>{const tk=(t.ticker||"").trim();return tk&&tk!=="--"&&/^[A-Z]{1,5}$/.test(tk);})
          .sort((a,b)=>new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0))
          .slice(0,2000);
