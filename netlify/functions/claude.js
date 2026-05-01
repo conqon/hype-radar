@@ -47,10 +47,33 @@ exports.handler = async (event) => {
             else                   raw = buf.toString("utf8");
 
             const parsed = JSON.parse(raw);
-            const arr = Array.isArray(parsed) ? parsed
-              : Array.isArray(parsed.data) ? parsed.data
-              : Array.isArray(parsed.transactions) ? parsed.transactions
-              : Object.values(parsed).find(v => Array.isArray(v)) || [];
+
+            // Handle both API formats:
+            // senatestockwatcher.com → [{senator, date_recieved, transactions:[{ticker,...}]}, ...]
+            // housestockwatcher.com  → [{representative, ticker, transaction_date, ...}, ...]
+            let arr = [];
+            if (Array.isArray(parsed)) {
+              if (parsed.length && Array.isArray(parsed[0].transactions)) {
+                // Nested Senate format — flatten filings into individual trades
+                parsed.forEach(filing => {
+                  const name = filing.senator ||
+                    `${filing.first_name||""} ${filing.last_name||""}`.trim() ||
+                    "Unknown";
+                  (filing.transactions || []).forEach(tx => {
+                    arr.push({
+                      ...tx,
+                      senator: name,
+                      disclosure_date: filing.date_recieved || filing.disclosure_date || "",
+                    });
+                  });
+                });
+              } else {
+                // Flat House format
+                arr = parsed;
+              }
+            } else if (Array.isArray(parsed.data)) {
+              arr = parsed.data;
+            }
 
             const sorted = arr
               .filter(t => {
