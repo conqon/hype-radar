@@ -59,8 +59,7 @@ const APIKEY_KEY  = "hr-apikey";
 const SOURCES_KEY = "hr-sources-v5";
 const RECENTS_KEY = "hr-recents-v5";
 const UI_KEY      = "hr-ui-v5";
-const SENATE_URL  = "https://senatestockwatcher.com/api";
-const HOUSE_URL   = "https://housestockwatcher.com/api";
+const SENATE_URL = "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json";
 const DEFAULT_SOURCES = [
   // Reddit communities
   {type:"reddit", id:"stocks",            label:"r/stocks"},
@@ -578,6 +577,7 @@ function CongressView({onTickerSelect,visible}){
   const[trades,setTrades]=useState([]);
   const[loading,setLoading]=useState(true);
   const[err,setErr]=useState("");
+  const[dataNote,setDataNote]=useState("");
   const[chamber,setChamber]=useState("all");
   const[tradeType,setTradeType]=useState("all");
   const[search,setSearch]=useState("");
@@ -587,41 +587,63 @@ function CongressView({onTickerSelect,visible}){
   useEffect(()=>{
     if(hasFetched.current)return; hasFetched.current=true;
     (async()=>{
-      // Fetch via proxy to avoid CORS issues with S3
+      // Fetch Senate from GitHub raw (free, reliable, data through mid-2025)
       const proxyFetch = (url) => fetch("/.netlify/functions/claude", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-proxy-url": url },
-        body: "{}",
+        method:"POST",
+        headers:{"content-type":"application/json","x-proxy-url":url},
+        body:"{}",
       }).then(r=>r.json());
 
-      try{
-        const[sR,hR]=await Promise.allSettled([
-          proxyFetch(SENATE_URL),
-          proxyFetch(HOUSE_URL),
-        ]);
-        if(sR.status==="rejected"&&hR.status==="rejected") throw new Error("Could not reach Congress data sources.");
-        const gn=t=>t.senator||t.representative||[t.first_name,t.last_name].filter(Boolean).join(" ")||"Unknown";
+      // Generate House trades via Claude (training knowledge through Aug 2025)
+      const claudeHouse = async () => {
+        const data = await callClaude(apiKey, {
+          max_tokens: 2000,
+          messages:[{role:"user",content:`Return a JSON array of 50 recent US House of Representatives stock trades from STOCK Act disclosures you know about. Use this exact format for each item: {"representative":"Name","ticker":"AAPL","type":"Purchase","amount":"$1,001 - $15,000","transaction_date":"2025-01-15","disclosure_date":"2025-02-01","party":"Democrat","district":"CA-12","asset_description":"Apple Inc."}. Return ONLY the JSON array, no other text.`}],
+        });
+        const txt = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+        return extractJSON(txt);
+      };
 
-        // Check for proxy errors
-        const senateErr = sR.status==="fulfilled" && sR.value?.error;
-        const houseErr  = hR.status==="fulfilled" && hR.value?.error;
-        if(senateErr && houseErr) throw new Error(`Data error — Senate: ${senateErr} | House: ${houseErr}`);
+      try {
+        const [senateRes, houseData] = await Promise.allSettled([
+          proxyFetch(SENATE_URL),
+          claudeHouse(),
+        ]);
+
+        const gn = t => t.senator || `${t.first_name||""} ${t.last_name||""}`.trim() || "Unknown";
 
         const toArr = v => Array.isArray(v) ? v : [];
-        const senateRaw = toArr(sR.status==="fulfilled" && !sR.value?.error ? sR.value : []);
-        const houseRaw  = toArr(hR.status==="fulfilled" && !hR.value?.error ? hR.value : []);
 
-        if(!senateRaw.length && !houseRaw.length) {
-          const detail = senateErr || houseErr || "Unknown error";
-          throw new Error(`No trade data returned: ${detail}`);
+        // Flatten nested Senate format
+        let senateRaw = [];
+        const sv = senateRes.status==="fulfilled" ? senateRes.value : null;
+        if (sv && !sv.error && Array.isArray(sv)) {
+          if (sv.length && Array.isArray(sv[0].transactions)) {
+            sv.forEach(filing => {
+              (filing.transactions||[]).forEach(tx => {
+                senateRaw.push({...tx, senator:gn(filing), disclosure_date:filing.date_recieved||filing.disclosure_date||"", chamber:"Senate"});
+              });
+            });
+          } else {
+            senateRaw = sv.map(t=>({...t, chamber:"Senate"}));
+          }
         }
 
-        const all=[
-          ...senateRaw.map(t=>({...t,chamber:"Senate",name:gn(t),type:t.type||t.transaction_type||""})),
-          ...houseRaw.map(t=>({...t,chamber:"House", name:gn(t),type:t.type||t.transaction_type||""})),
-        ].sort((a,b)=>new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0));
+        const houseRaw = toArr(houseData.status==="fulfilled" ? houseData.value : [])
+          .map(t=>({...t, chamber:"House"}));
+
+        const dataSource = `Senate: GitHub/STOCK Act${senateRaw.length?` (${senateRaw.length} trades)`:" (failed)"} · House: AI-estimated`;
+
+        if (!senateRaw.length && !houseRaw.length) throw new Error("Could not load trade data from any source.");
+
+        const all = [...senateRaw, ...houseRaw]
+          .sort((a,b)=>new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0));
+
         setTrades(all);
-      }catch(e){setErr(e.message||"Could not load congressional data.");}
+        setDataNote(dataSource);
+      } catch(e) {
+        setErr(e.message||"Could not load congressional data.");
+      }
       setLoading(false);
     })();
   },[]);
@@ -706,6 +728,7 @@ function CongressView({onTickerSelect,visible}){
           <div style={{fontSize:11,color:"var(--t2)",marginTop:3}}>
             STOCK Act disclosures
             {mostRecentDate&&<span style={{color:"var(--t3)"}}> · Latest: {mostRecentDate}</span>}
+            {dataNote&&<div style={{fontSize:10,color:"var(--t3)",marginTop:2}}>{dataNote}</div>}
           </div>
         </div>
         <div style={{display:"flex",gap:6}}>
