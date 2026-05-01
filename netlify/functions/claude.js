@@ -19,49 +19,62 @@ exports.handler = async (event) => {
   // If x-proxy-url header is set, proxy that URL with a GET request (for Congress data)
   const proxyUrl = event.headers["x-proxy-url"];
   if (proxyUrl) {
-    return new Promise((resolve) => {
-      const url = new URL(proxyUrl);
+    const zlib = require("zlib");
+
+    const doGet = (urlStr) => new Promise((resolve) => {
+      const url = new URL(urlStr);
       const options = {
         hostname: url.hostname,
         path: url.pathname + url.search,
         method: "GET",
-        headers: { "accept": "application/json", "accept-encoding": "identity" },
+        headers: { "accept": "application/json", "user-agent": "Mozilla/5.0" },
       };
       const req = https.request(options, (res) => {
+        // Follow redirects (301, 302, 307, 308)
+        if ([301,302,307,308].includes(res.statusCode) && res.headers.location) {
+          resolve(doGet(res.headers.location));
+          return;
+        }
         const chunks = [];
         res.on("data", chunk => chunks.push(chunk));
         res.on("end", () => {
           try {
-            const raw = Buffer.concat(chunks).toString("utf8");
-            const parsed = JSON.parse(raw);
+            const buf = Buffer.concat(chunks);
+            const enc = (res.headers["content-encoding"] || "").toLowerCase();
+            let raw;
+            if (enc === "gzip")    raw = zlib.gunzipSync(buf).toString("utf8");
+            else if (enc === "br") raw = zlib.brotliDecompressSync(buf).toString("utf8");
+            else                   raw = buf.toString("utf8");
 
-            // Normalise to array
+            const parsed = JSON.parse(raw);
             const arr = Array.isArray(parsed) ? parsed
               : Array.isArray(parsed.data) ? parsed.data
               : Array.isArray(parsed.transactions) ? parsed.transactions
               : Object.values(parsed).find(v => Array.isArray(v)) || [];
 
-            // Sort newest first, keep only 1500 most recent — keeps response under ~1MB
             const sorted = arr
-              .filter(t => t.ticker && t.ticker !== "--" && /^[A-Z]{1,5}$/.test((t.ticker||"").trim()))
+              .filter(t => {
+                const tk = (t.ticker||"").trim().toUpperCase();
+                return tk && tk !== "--" && /^[A-Z]{1,5}$/.test(tk);
+              })
               .sort((a,b) => new Date(b.transaction_date||b.disclosure_date||0) - new Date(a.transaction_date||a.disclosure_date||0))
               .slice(0, 1500);
 
             resolve({ statusCode: 200, headers, body: JSON.stringify(sorted) });
           } catch(e) {
-            resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "Parse error: " + e.message }) });
+            const buf = Buffer.concat(chunks);
+            resolve({ statusCode: 500, headers, body: JSON.stringify({
+              error: `Parse error: ${e.message} | HTTP ${res.statusCode} | encoding: ${res.headers["content-encoding"]||"none"} | first 200 chars: ${buf.slice(0,200).toString("utf8")}`
+            })});
           }
         });
       });
-      req.on("error", err => {
-        resolve({ statusCode: 500, headers, body: JSON.stringify({ error: err.message }) });
-      });
-      req.setTimeout(30000, () => {
-        req.destroy();
-        resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "Timed out fetching Congress data" }) });
-      });
+      req.on("error", err => resolve({ statusCode: 500, headers, body: JSON.stringify({ error: `Request error: ${err.message}` }) }));
+      req.setTimeout(30000, () => { req.destroy(); resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "Timed out" }) }); });
       req.end();
     });
+
+    return doGet(proxyUrl);
   }
 
   // Otherwise proxy to Anthropic API
