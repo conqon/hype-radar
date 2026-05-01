@@ -25,34 +25,40 @@ exports.handler = async (event) => {
         hostname: url.hostname,
         path: url.pathname + url.search,
         method: "GET",
-        headers: { "accept": "application/json" },
+        headers: { "accept": "application/json", "accept-encoding": "identity" },
       };
       const req = https.request(options, (res) => {
         const chunks = [];
-        let totalSize = 0;
-        const MAX = 5 * 1024 * 1024; // 5MB limit
-
-        res.on("data", chunk => {
-          totalSize += chunk.length;
-          if (totalSize <= MAX) chunks.push(chunk);
-        });
+        res.on("data", chunk => chunks.push(chunk));
         res.on("end", () => {
           try {
             const raw = Buffer.concat(chunks).toString("utf8");
-            // Validate it parses as JSON
-            JSON.parse(raw);
-            resolve({ statusCode: 200, headers, body: raw });
+            const parsed = JSON.parse(raw);
+
+            // Normalise to array
+            const arr = Array.isArray(parsed) ? parsed
+              : Array.isArray(parsed.data) ? parsed.data
+              : Array.isArray(parsed.transactions) ? parsed.transactions
+              : Object.values(parsed).find(v => Array.isArray(v)) || [];
+
+            // Sort newest first, keep only 1500 most recent — keeps response under ~1MB
+            const sorted = arr
+              .filter(t => t.ticker && t.ticker !== "--" && /^[A-Z]{1,5}$/.test((t.ticker||"").trim()))
+              .sort((a,b) => new Date(b.transaction_date||b.disclosure_date||0) - new Date(a.transaction_date||a.disclosure_date||0))
+              .slice(0, 1500);
+
+            resolve({ statusCode: 200, headers, body: JSON.stringify(sorted) });
           } catch(e) {
-            resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "Failed to parse response: " + e.message }) });
+            resolve({ statusCode: 500, headers, body: JSON.stringify({ error: "Parse error: " + e.message }) });
           }
         });
       });
       req.on("error", err => {
         resolve({ statusCode: 500, headers, body: JSON.stringify({ error: err.message }) });
       });
-      req.setTimeout(25000, () => {
+      req.setTimeout(30000, () => {
         req.destroy();
-        resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "Timed out fetching data" }) });
+        resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "Timed out fetching Congress data" }) });
       });
       req.end();
     });
