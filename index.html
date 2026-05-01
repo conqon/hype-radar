@@ -599,31 +599,20 @@ function CongressView({onTickerSelect,visible}){
           proxyFetch(SENATE_URL),
           proxyFetch(HOUSE_URL),
         ]);
-        if(sR.status==="rejected"&&hR.status==="rejected") throw new Error("Could not load either chamber's data.");
+        if(sR.status==="rejected"&&hR.status==="rejected") throw new Error("Could not reach Congress data sources.");
         const gn=t=>t.senator||t.representative||[t.first_name,t.last_name].filter(Boolean).join(" ")||"Unknown";
 
-        // Safely extract array from response — handles plain array or wrapped {data:[...]}
-        const toArray = v => {
-          if (!v) return [];
-          if (Array.isArray(v)) return v;
-          if (Array.isArray(v.data)) return v.data;
-          if (Array.isArray(v.transactions)) return v.transactions;
-          // Try to find any array property
-          const arr = Object.values(v).find(x => Array.isArray(x));
-          return arr || [];
-        };
+        // Data is already filtered/sorted by the proxy — just tag with chamber and normalise name
+        const toArr = v => Array.isArray(v) ? v : [];
+        const senateRaw = toArr(sR.status==="fulfilled" ? sR.value : []);
+        const houseRaw  = toArr(hR.status==="fulfilled" ? hR.value : []);
 
-        const senateRaw = sR.status==="fulfilled" ? toArray(sR.value) : [];
-        const houseRaw  = hR.status==="fulfilled" ? toArray(hR.value) : [];
-
-        if(!senateRaw.length && !houseRaw.length) throw new Error("Received empty data from both chambers.");
+        if(!senateRaw.length && !houseRaw.length) throw new Error("No trade data returned. The data source may be temporarily unavailable.");
 
         const all=[
           ...senateRaw.map(t=>({...t,chamber:"Senate",name:gn(t),type:t.type||t.transaction_type||""})),
           ...houseRaw.map(t=>({...t,chamber:"House", name:gn(t),type:t.type||t.transaction_type||""})),
-        ].filter(t=>{const tk=(t.ticker||"").trim();return tk&&tk!=="--"&&/^[A-Z]{1,5}$/.test(tk);})
-         .sort((a,b)=>new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0))
-         .slice(0,2000);
+        ].sort((a,b)=>new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0));
         setTrades(all);
       }catch(e){setErr(e.message||"Could not load congressional data.");}
       setLoading(false);
