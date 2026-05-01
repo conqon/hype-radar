@@ -602,12 +602,19 @@ function CongressView({onTickerSelect,visible}){
         if(sR.status==="rejected"&&hR.status==="rejected") throw new Error("Could not reach Congress data sources.");
         const gn=t=>t.senator||t.representative||[t.first_name,t.last_name].filter(Boolean).join(" ")||"Unknown";
 
-        // Data is already filtered/sorted by the proxy — just tag with chamber and normalise name
-        const toArr = v => Array.isArray(v) ? v : [];
-        const senateRaw = toArr(sR.status==="fulfilled" ? sR.value : []);
-        const houseRaw  = toArr(hR.status==="fulfilled" ? hR.value : []);
+        // Check for proxy errors
+        const senateErr = sR.status==="fulfilled" && sR.value?.error;
+        const houseErr  = hR.status==="fulfilled" && hR.value?.error;
+        if(senateErr && houseErr) throw new Error(`Data error — Senate: ${senateErr} | House: ${houseErr}`);
 
-        if(!senateRaw.length && !houseRaw.length) throw new Error("No trade data returned. The data source may be temporarily unavailable.");
+        const toArr = v => Array.isArray(v) ? v : [];
+        const senateRaw = toArr(sR.status==="fulfilled" && !sR.value?.error ? sR.value : []);
+        const houseRaw  = toArr(hR.status==="fulfilled" && !hR.value?.error ? hR.value : []);
+
+        if(!senateRaw.length && !houseRaw.length) {
+          const detail = senateErr || houseErr || "Unknown error";
+          throw new Error(`No trade data returned: ${detail}`);
+        }
 
         const all=[
           ...senateRaw.map(t=>({...t,chamber:"Senate",name:gn(t),type:t.type||t.transaction_type||""})),
