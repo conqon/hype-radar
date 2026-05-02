@@ -669,33 +669,47 @@ function ScreenerView(props) {
   return (
     <div style={{display:visible ? "block" : "none"}}>
       <header style={{padding:"max(env(safe-area-inset-top),20px) 20px 0",background:"var(--bg)",position:"sticky",top:0,zIndex:100}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:10,borderBottom:"1px solid var(--bd)"}}>
+
+        {/* Title row */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div>
             <div style={{fontFamily:"var(--fd)",fontSize:28,fontWeight:500,letterSpacing:"-.3px",lineHeight:1}}>Screener</div>
             <div style={{fontSize:11,color:"var(--t2)",marginTop:3}}>Broken stock · healthy company</div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
             {lastRun[activeScreen] && <span style={{fontSize:10,color:"var(--t3)"}}>{lastRun[activeScreen].toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
-            <button onClick={function() { runScreen(activeScreen); }} disabled={loading} style={{width:34,height:34,borderRadius:10,border:"1px solid var(--bd)",background:"var(--surface)",cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,opacity:loading?.5:1,boxShadow:"var(--sh)"}}>
+            {/* Sort toggle */}
+            <button onClick={function() { setSortOrder(function(s) { return s === "high" ? "low" : "high"; }); }}
+              style={{height:32,padding:"0 10px",borderRadius:8,border:"1px solid var(--bd)",background:"var(--surface)",cursor:"pointer",fontSize:10,fontWeight:600,color:"var(--t2)",whiteSpace:"nowrap",boxShadow:"var(--sh)"}}>
+              {sortOrder === "high" ? "Score: High" : "Score: Low"}
+            </button>
+            <button onClick={function() { runScreen(activeScreen); }} disabled={loading}
+              style={{width:32,height:32,borderRadius:8,border:"1px solid var(--bd)",background:"var(--surface)",cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:loading?.5:1,boxShadow:"var(--sh)"}}>
               {loading ? <Spinner/> : "R"}
             </button>
           </div>
         </div>
 
-        <div style={{display:"flex",gap:6,overflowX:"auto",padding:"10px 0",scrollbarWidth:"none"}}>
+        {/* Screen type pills */}
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,scrollbarWidth:"none"}}>
           {SCREENER_TYPES.map(function(s) {
             return (
               <button key={s.id}
                 onClick={function() { setActiveScreen(s.id); if (!results[s.id] && !loading) runScreen(s.id); }}
-                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 14px",borderRadius:10,border:"1px solid " + (activeScreen === s.id ? "var(--t1)" : "var(--bd)"),background:activeScreen === s.id ? "var(--t1)" : "var(--surface)",cursor:"pointer",flexShrink:0,boxShadow:"var(--sh)",minWidth:80}}>
+                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 12px",borderRadius:8,border:"1px solid " + (activeScreen === s.id ? "var(--t1)" : "var(--bd)"),background:activeScreen === s.id ? "var(--t1)" : "var(--surface)",cursor:"pointer",flexShrink:0,boxShadow:"var(--sh)"}}>
                 <span style={{fontSize:10,fontWeight:activeScreen === s.id ? 600 : 400,color:activeScreen === s.id ? "var(--surface)" : "var(--t2)",whiteSpace:"nowrap"}}>{s.label}</span>
-                {results[s.id] && <div style={{width:16,height:2,borderRadius:1,background:activeScreen === s.id ? "rgba(255,255,255,.5)" : "var(--green)"}}/>}
+                {results[s.id] && <div style={{width:14,height:2,borderRadius:1,background:activeScreen === s.id ? "rgba(255,255,255,.5)" : "var(--green)"}}/>}
               </button>
             );
           })}
         </div>
 
-        {currentScreen && <div style={{fontSize:11,color:"var(--t2)",padding:"6px 0 10px",borderBottom:"1px solid var(--bd)"}}>{currentScreen.desc}</div>}
+        {/* Price filter pills */}
+        <div style={{display:"flex",gap:5,overflowX:"auto",paddingBottom:10,scrollbarWidth:"none",borderBottom:"1px solid var(--bd)"}}>
+          {PRICE_RANGES.map(function(r) {
+            return <FPill key={r.id} active={priceFilter === r.id} onClick={function() { setPriceFilter(r.id); }}>{r.label}</FPill>;
+          })}
+        </div>
 
         {err && (
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:"var(--rs)",background:"var(--rbg)",border:"1px solid var(--rbd)",margin:"8px 0",fontSize:12,color:"var(--red)"}}>
@@ -706,25 +720,6 @@ function ScreenerView(props) {
       </header>
 
       <div style={{padding:"12px 20px"}}>
-
-        {/* Price + Sort filters */}
-        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14,padding:"12px 14px",background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--r)",boxShadow:"var(--sh)"}}>
-          <div>
-            <div style={{fontSize:10,fontWeight:600,letterSpacing:".08em",textTransform:"uppercase",color:"var(--t3)",marginBottom:6}}>Price Range</div>
-            <div style={{display:"flex",gap:6,overflowX:"auto",scrollbarWidth:"none"}}>
-              {PRICE_RANGES.map(function(r) {
-                return <FPill key={r.id} active={priceFilter === r.id} onClick={function() { setPriceFilter(r.id); }}>{r.label}</FPill>;
-              })}
-            </div>
-          </div>
-          <div style={{borderTop:"1px solid var(--bd)",paddingTop:8}}>
-            <div style={{fontSize:10,fontWeight:600,letterSpacing:".08em",textTransform:"uppercase",color:"var(--t3)",marginBottom:6}}>Sort By</div>
-            <div style={{display:"flex",gap:6}}>
-              <FPill active={sortOrder === "high"} onClick={function() { setSortOrder("high"); }}>Highest Score First</FPill>
-              <FPill active={sortOrder === "low"}  onClick={function() { setSortOrder("low");  }}>Lowest Score First</FPill>
-            </div>
-          </div>
-        </div>
         {loading && !currentResults.length && (
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {[0,1,2,3,4].map(function(i) { return <div key={i} className="sk" style={{height:120,animationDelay:(i*.08)+"s"}}/>; })}
@@ -732,7 +727,7 @@ function ScreenerView(props) {
         )}
         {!loading && !err && (results[activeScreen] || []).length === 0 && (
           <div style={{textAlign:"center",padding:"40px 0",color:"var(--t2)"}}>
-            <p style={{fontSize:13}}>Tap refresh to run the screen</p>
+            <p style={{fontSize:13}}>Tap R to run the screen</p>
           </div>
         )}
         {!loading && !err && (results[activeScreen] || []).length > 0 && currentResults.length === 0 && (
