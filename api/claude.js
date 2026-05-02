@@ -1,147 +1,89 @@
 const https = require("https");
 
-// Proxy any URL passed in the request body, or default to Anthropic API
-exports.handler = async (event) => {
-  const headers = {
-    "content-type": "application/json",
-    "access-control-allow-origin": "*",
-    "access-control-allow-headers": "content-type, x-api-key, x-proxy-url",
-  };
+module.exports = async function(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "content-type, x-api-key, x-proxy-url");
 
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers, body: "" };
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
-  }
+  const proxyUrl = req.headers["x-proxy-url"];
 
-  // If x-proxy-url header is set, proxy that URL with a GET request (for Congress data)
-  const proxyUrl = event.headers["x-proxy-url"];
+  // Congress S3 proxy
   if (proxyUrl) {
     const zlib = require("zlib");
-
-    const doGet = (urlStr) => new Promise((resolve) => {
-      const url = new URL(urlStr);
-      const options = {
-        hostname: url.hostname,
-        path: url.pathname + url.search,
-        method: "GET",
-        headers: { "accept": "application/json", "user-agent": "Mozilla/5.0" },
-      };
-      const req = https.request(options, (res) => {
-        // Follow redirects (301, 302, 307, 308)
-        if ([301,302,307,308].includes(res.statusCode) && res.headers.location) {
-          resolve(doGet(res.headers.location));
-          return;
-        }
-        const chunks = [];
-        res.on("data", chunk => chunks.push(chunk));
-        res.on("end", () => {
-          try {
-            const buf = Buffer.concat(chunks);
-            const enc = (res.headers["content-encoding"] || "").toLowerCase();
-            let raw;
-            if (enc === "gzip")    raw = zlib.gunzipSync(buf).toString("utf8");
-            else if (enc === "br") raw = zlib.brotliDecompressSync(buf).toString("utf8");
-            else                   raw = buf.toString("utf8");
-
-            const parsed = JSON.parse(raw);
-
-            // Handle both API formats:
-            // senatestockwatcher.com → [{senator, date_recieved, transactions:[{ticker,...}]}, ...]
-            // housestockwatcher.com  → [{representative, ticker, transaction_date, ...}, ...]
-            let arr = [];
-            if (Array.isArray(parsed)) {
-              if (parsed.length && Array.isArray(parsed[0].transactions)) {
-                // Nested Senate format — flatten filings into individual trades
-                parsed.forEach(filing => {
-                  const name = filing.senator ||
-                    `${filing.first_name||""} ${filing.last_name||""}`.trim() ||
-                    "Unknown";
-                  (filing.transactions || []).forEach(tx => {
-                    arr.push({
-                      ...tx,
-                      senator: name,
-                      disclosure_date: filing.date_recieved || filing.disclosure_date || "",
-                    });
-                  });
-                });
-              } else {
-                // Flat House format
-                arr = parsed;
-              }
-            } else if (Array.isArray(parsed.data)) {
-              arr = parsed.data;
+    const result = await new Promise((resolve) => {
+      const doGet = (urlStr) => {
+        const url = new URL(urlStr);
+        const request = https.request(
+          { hostname: url.hostname, path: url.pathname + url.search, method: "GET", headers: { "accept": "application/json", "user-agent": "Mozilla/5.0" } },
+          (response) => {
+            if ([301,302,307,308].includes(response.statusCode) && response.headers.location) {
+              return doGet(response.headers.location);
             }
-
-            const sorted = arr
-              .filter(t => {
-                const tk = (t.ticker||"").trim().toUpperCase();
-                return tk && tk !== "--" && /^[A-Z]{1,5}$/.test(tk);
-              })
-              .sort((a,b) => new Date(b.transaction_date||b.disclosure_date||0) - new Date(a.transaction_date||a.disclosure_date||0))
-              .slice(0, 1500);
-
-            resolve({ statusCode: 200, headers, body: JSON.stringify(sorted) });
-          } catch(e) {
-            const buf = Buffer.concat(chunks);
-            resolve({ statusCode: 500, headers, body: JSON.stringify({
-              error: `Parse error: ${e.message} | HTTP ${res.statusCode} | encoding: ${res.headers["content-encoding"]||"none"} | first 200 chars: ${buf.slice(0,200).toString("utf8")}`
-            })});
+            const chunks = [];
+            response.on("data", c => chunks.push(c));
+            response.on("end", () => {
+              try {
+                const buf = Buffer.concat(chunks);
+                const enc = (response.headers["content-encoding"] || "").toLowerCase();
+                const raw = enc === "gzip" ? zlib.gunzipSync(buf).toString("utf8")
+                          : enc === "br"   ? zlib.brotliDecompressSync(buf).toString("utf8")
+                          : buf.toString("utf8");
+                const parsed = JSON.parse(raw);
+                const arr = Array.isArray(parsed) ? parsed
+                  : Array.isArray(parsed.data) ? parsed.data
+                  : Object.values(parsed).find(v => Array.isArray(v)) || [];
+                const sorted = arr
+                  .filter(t => { const tk=(t.ticker||"").trim().toUpperCase(); return tk&&tk!=="--"&&/^[A-Z]{1,5}$/.test(tk); })
+                  .sort((a,b) => new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0))
+                  .slice(0,1500);
+                resolve({ ok:true, data:sorted });
+              } catch(e) { resolve({ ok:false, error:"Parse error: "+e.message }); }
+            });
           }
-        });
-      });
-      req.on("error", err => resolve({ statusCode: 500, headers, body: JSON.stringify({ error: `Request error: ${err.message}` }) }));
-      req.setTimeout(30000, () => { req.destroy(); resolve({ statusCode: 504, headers, body: JSON.stringify({ error: "Timed out" }) }); });
-      req.end();
+        );
+        request.on("error", e => resolve({ ok:false, error:e.message }));
+        request.setTimeout(25000, () => { request.destroy(); resolve({ ok:false, error:"Timed out" }); });
+        request.end();
+      };
+      doGet(proxyUrl);
     });
-
-    return doGet(proxyUrl);
+    if (!result.ok) return res.status(500).json({ error: result.error });
+    return res.status(200).json(result.data);
   }
 
-  // Otherwise proxy to Anthropic API
-  const apiKey = event.headers["x-api-key"];
-  if (!apiKey) {
-    return { statusCode: 401, headers, body: JSON.stringify({ error: { message: "Missing API key" } }) };
-  }
-  if (!event.body) {
-    return { statusCode: 400, headers, body: JSON.stringify({ error: { message: "Missing request body" } }) };
-  }
+  // Anthropic proxy
+  const apiKey = req.headers["x-api-key"];
+  if (!apiKey) return res.status(401).json({ error: { message: "Missing API key" } });
 
-  return new Promise((resolve) => {
-    const bodyData = event.body;
-    const options = {
-      hostname: "api.anthropic.com",
-      path: "/v1/messages",
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "content-length": Buffer.byteLength(bodyData),
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
+  const bodyData = JSON.stringify(req.body);
+  await new Promise((resolve) => {
+    const request = https.request(
+      {
+        hostname: "api.anthropic.com",
+        path: "/v1/messages",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(bodyData),
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
       },
-    };
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", chunk => { data += chunk; });
-      res.on("end", () => {
-        try {
-          JSON.parse(data);
-          resolve({ statusCode: res.statusCode, headers, body: data });
-        } catch {
-          resolve({ statusCode: 500, headers, body: JSON.stringify({ error: { message: "Invalid response from Anthropic: " + data.slice(0, 200) } }) });
-        }
-      });
-    });
-    req.on("error", err => {
-      resolve({ statusCode: 500, headers, body: JSON.stringify({ error: { message: "Request failed: " + err.message } }) });
-    });
-    req.setTimeout(55000, () => {
-      req.destroy();
-      resolve({ statusCode: 504, headers, body: JSON.stringify({ error: { message: "Request timed out" } }) });
-    });
-    req.write(bodyData);
-    req.end();
+      (response) => {
+        let data = "";
+        response.on("data", c => { data += c; });
+        response.on("end", () => {
+          try { res.status(response.statusCode).json(JSON.parse(data)); }
+          catch(e) { res.status(500).json({ error: { message: "Invalid Anthropic response" } }); }
+          resolve();
+        });
+      }
+    );
+    request.on("error", e => { res.status(500).json({ error: { message: e.message } }); resolve(); });
+    request.setTimeout(55000, () => { request.destroy(); res.status(504).json({ error: { message: "Timed out" } }); resolve(); });
+    request.write(bodyData);
+    request.end();
   });
 };
