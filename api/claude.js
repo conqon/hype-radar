@@ -74,9 +74,9 @@ module.exports = async function(req, res) {
     return res.status(200).json(result.data);
   }
 
-  // Anthropic proxy
-  const apiKey = req.headers["x-api-key"];
-  if (!apiKey) return res.status(401).json({ error: { message: "Missing API key" } });
+  // Anthropic proxy — key comes from server environment variable, never from the client
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: { message: "API key not configured on server." } });
 
   const bodyData = JSON.stringify(req.body);
   await new Promise((resolve) => {
