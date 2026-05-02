@@ -648,15 +648,35 @@ function ScreenerView(props) {
   var loadingState = useState(false); var loading = loadingState[0], setLoading = loadingState[1];
   var errState = useState(""); var err = errState[0], setErr = errState[1];
   var lastRunState = useState({}); var lastRun = lastRunState[0], setLastRun = lastRunState[1];
+  var priceState = useState("any"); var priceFilter = priceState[0], setPriceFilter = priceState[1];
+  var sortState = useState("high"); var sortOrder = sortState[0], setSortOrder = sortState[1];
+
+  var PRICE_RANGES = [
+    {id:"any",    label:"Any Price",  min:0,    max:Infinity},
+    {id:"u5",     label:"Under $5",   min:0,    max:5},
+    {id:"5to20",  label:"$5 - $20",   min:5,    max:20},
+    {id:"20to50", label:"$20 - $50",  min:20,   max:50},
+    {id:"50to200",label:"$50 - $200", min:50,   max:200},
+    {id:"o200",   label:"Over $200",  min:200,  max:Infinity},
+  ];
+
+  function priceHint() {
+    var r = PRICE_RANGES.filter(function(p) { return p.id === priceFilter; })[0];
+    if (!r || r.id === "any") return "";
+    if (r.max === Infinity) return "Focus on stocks over $" + r.min;
+    return "Focus on stocks priced between $" + r.min + " and $" + r.max;
+  }
 
   function runScreen(screenId) {
     if (loading) return;
     setLoading(true); setErr("");
     var screenType = SCREENER_TYPES.filter(function(s) { return s.id === screenId; })[0];
+    var hint = priceHint();
+    var content = "Run the " + screenType.label + " screen: " + screenType.desc + ". Find 8 best broken stock healthy company opportunities." + (hint ? " " + hint + "." : "") + " Return JSON array only.";
     callClaude(apiKey, {
       max_tokens: 3000,
       system: SCREENER_PROMPT,
-      messages: [{role:"user", content:"Run the " + screenType.label + " screen: " + screenType.desc + ". Find 8 best broken stock healthy company opportunities. Return JSON array only."}],
+      messages: [{role:"user", content:content}],
     }).then(function(data) {
       var txt = (data.content || []).filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("").trim();
       if (!txt) throw new Error("Empty response");
@@ -674,8 +694,23 @@ function ScreenerView(props) {
     if (visible && !results[activeScreen] && !loading) runScreen(activeScreen);
   }, [visible, activeScreen]);
 
-  var currentResults = results[activeScreen] || [];
   var currentScreen = SCREENER_TYPES.filter(function(s) { return s.id === activeScreen; })[0];
+
+  // Apply price filter + sort client-side
+  var currentResults = useMemo(function() {
+    var raw = results[activeScreen] || [];
+    var range = PRICE_RANGES.filter(function(p) { return p.id === priceFilter; })[0] || PRICE_RANGES[0];
+    var filtered = raw.filter(function(s) {
+      if (range.id === "any") return true;
+      var p = Number(s.current_price);
+      return !isNaN(p) && p >= range.min && p < range.max;
+    });
+    return filtered.slice().sort(function(a, b) {
+      return sortOrder === "high"
+        ? (b.opportunity_score || 0) - (a.opportunity_score || 0)
+        : (a.opportunity_score || 0) - (b.opportunity_score || 0);
+    });
+  }, [results, activeScreen, priceFilter, sortOrder]);
 
   function convColor(c) { return {high:"var(--green)",medium:"var(--amb)",low:"var(--t2)"}[c] || "var(--t2)"; }
   function convBg(c)    { return {high:"var(--gbg)",medium:"var(--abg)",low:"var(--s2)"}[c] || "var(--s2)"; }
@@ -711,7 +746,22 @@ function ScreenerView(props) {
           })}
         </div>
 
-        {currentScreen && <div style={{fontSize:11,color:"var(--t2)",padding:"6px 0 10px",borderBottom:"1px solid var(--bd)"}}>{currentScreen.desc}</div>}
+        {currentScreen && <div style={{fontSize:11,color:"var(--t2)",padding:"6px 0 8px"}}>{currentScreen.desc}</div>}
+
+        {/* Price filter */}
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6,scrollbarWidth:"none"}}>
+          {PRICE_RANGES.map(function(r) {
+            return <FPill key={r.id} active={priceFilter === r.id} onClick={function() { setPriceFilter(r.id); }}>{r.label}</FPill>;
+          })}
+        </div>
+
+        {/* Sort order */}
+        <div style={{display:"flex",gap:6,alignItems:"center",paddingBottom:10,borderBottom:"1px solid var(--bd)"}}>
+          <span style={{fontSize:10,fontWeight:600,letterSpacing:".08em",textTransform:"uppercase",color:"var(--t3)",flexShrink:0}}>Sort:</span>
+          <FPill active={sortOrder === "high"} onClick={function() { setSortOrder("high"); }}>Highest Score</FPill>
+          <FPill active={sortOrder === "low"}  onClick={function() { setSortOrder("low");  }}>Lowest Score</FPill>
+        </div>
+
         {err && (
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:"var(--rs)",background:"var(--rbg)",border:"1px solid var(--rbd)",margin:"8px 0",fontSize:12,color:"var(--red)"}}>
             {err}
@@ -726,9 +776,15 @@ function ScreenerView(props) {
             {[0,1,2,3,4].map(function(i) { return <div key={i} className="sk" style={{height:120,animationDelay:(i*.08)+"s"}}/>; })}
           </div>
         )}
-        {!loading && !err && currentResults.length === 0 && (
+        {!loading && !err && (results[activeScreen] || []).length === 0 && (
           <div style={{textAlign:"center",padding:"40px 0",color:"var(--t2)"}}>
             <p style={{fontSize:13}}>Tap refresh to run the screen</p>
+          </div>
+        )}
+        {!loading && !err && (results[activeScreen] || []).length > 0 && currentResults.length === 0 && (
+          <div style={{textAlign:"center",padding:"30px 0",color:"var(--t2)"}}>
+            <p style={{fontSize:13,marginBottom:8}}>No results in this price range</p>
+            <button onClick={function() { setPriceFilter("any"); }} style={{fontSize:11,color:"var(--blue)",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear price filter</button>
           </div>
         )}
 
@@ -1130,23 +1186,48 @@ function CongressView(props) {
     if (hasFetched.current) return;
     hasFetched.current = true;
     (function() {
-      var senateRaw = [];
-      fetch(SENATE_URL).then(function(r) { return r.json(); }).then(function(data) {
-        if (Array.isArray(data) && data.length && Array.isArray(data[0] && data[0].transactions)) {
-          data.forEach(function(f) {
-            var name = f.senator || ((f.first_name || "") + " " + (f.last_name || "")).trim() || "Unknown";
+      // Route through proxy — the raw file is 10-20MB, proxy filters it to ~500KB
+      fetch("/api/claude", {
+        method: "POST",
+        headers: {"content-type": "application/json", "x-proxy-url": SENATE_URL},
+        body: "{}",
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        // Proxy returns a pre-filtered flat array
+        var arr = Array.isArray(data) ? data : [];
+        if (!arr.length) throw new Error("No trade data returned from proxy.");
+
+        // The aggregate file is already flat — each item has senator name included
+        // Handle both flat format and nested {senator, transactions:[]} format just in case
+        var senateRaw = [];
+        if (arr.length && Array.isArray(arr[0].transactions)) {
+          // Nested format — flatten
+          arr.forEach(function(f) {
+            var name = f.senator || ((f.first_name||"") + " " + (f.last_name||"")).trim() || "Unknown";
             (f.transactions || []).forEach(function(tx) {
-              senateRaw.push(Object.assign({}, tx, {senator:name, disclosure_date:f.date_recieved||"", chamber:"Senate"}));
+              senateRaw.push(Object.assign({}, tx, {senator:name, disclosure_date:f.date_recieved||"", chamber:"Senate", name:name}));
             });
           });
-        } else if (Array.isArray(data)) {
-          senateRaw = data.map(function(t) { return Object.assign({}, t, {chamber:"Senate"}); });
+        } else {
+          // Flat format — senator name already on each record
+          senateRaw = arr.map(function(t) {
+            var name = t.senator || ((t.first_name||"") + " " + (t.last_name||"")).trim() || "Unknown";
+            return Object.assign({}, t, {chamber:"Senate", name:name});
+          });
         }
-        setNote("Senate: " + senateRaw.length + " trades via GitHub · House: AI estimated");
-        setTrades(senateRaw.sort(function(a,b) { return new Date(b.transaction_date||b.disclosure_date||0) - new Date(a.transaction_date||a.disclosure_date||0); }));
-      }).catch(function() {
-        setErr("Could not load Senate data. Check connection.");
-      }).finally(function() {
+
+        senateRaw.sort(function(a,b) {
+          return new Date(b.transaction_date||b.disclosure_date||0) - new Date(a.transaction_date||a.disclosure_date||0);
+        });
+
+        setNote("Senate: " + senateRaw.length + " trades · STOCK Act via GitHub");
+        setTrades(senateRaw);
+      })
+      .catch(function(e) {
+        setErr("Could not load trade data: " + (e.message || "unknown error"));
+      })
+      .finally(function() {
         setLoading(false);
       });
     })();
@@ -1298,33 +1379,76 @@ function SearchView(props) {
   var recentsState = useState(function() { return lsGet(RECENTS_KEY, []); });
   var recents = recentsState[0], setRecents = recentsState[1];
   var activeCatState = useState("all"); var activeCat = activeCatState[0], setActiveCat = activeCatState[1];
+  var resolvingState = useState(false); var resolving = resolvingState[0], setResolving = resolvingState[1];
+  var resolveErrState = useState(""); var resolveErr = resolveErrState[0], setResolveErr = resolveErrState[1];
+  var suggestionsState = useState(null); var suggestions = suggestionsState[0], setSuggestions = suggestionsState[1];
   var inputRef = useRef(null);
 
   useEffect(function() { if (visible) setTimeout(function() { if (inputRef.current) inputRef.current.focus(); }, 100); }, [visible]);
 
   var CATS = [
-    {id:"all",    label:"Popular",       tickers:["TSLA","NVDA","AAPL","AMZN","GME","PLTR","AMD","SOFI","NIO","RIVN","MARA","RIOT","SMCI","RKLB","IONQ","UPST","HOOD"]},
-    {id:"tech",   label:"Tech",          tickers:["NVDA","AAPL","MSFT","GOOGL","META","AMD","QCOM","INTC","CRM","SNOW","NET","DDOG","SMCI","RKLB"]},
-    {id:"ai",     label:"AI",            tickers:["NVDA","MSFT","GOOGL","META","PLTR","SOUN","BBAI","IONQ","UPST","AI","AMBA"]},
-    {id:"med",    label:"Medical",       tickers:["PFE","MRNA","JNJ","ABBV","HIMS","NVAX","BNTX","SRPT","ACAD","AXSM","SAVA"]},
-    {id:"bio",    label:"Biotech",       tickers:["SRPT","RARE","ACAD","AXSM","SAVA","VRTX","REGN","ALNY","CRSP","BEAM","NTLA"]},
-    {id:"ev",     label:"EV",            tickers:["TSLA","RIVN","LCID","NIO","XPEV","LI","GM","F","NKLA","WKHS","FSR"]},
-    {id:"crypto", label:"Crypto",        tickers:["COIN","MARA","RIOT","MSTR","CLSK","HUT","CIFR","WULF","BTDR"]},
-    {id:"energy", label:"Energy",        tickers:["XOM","CVX","OXY","SLB","ENPH","FSLR","PLUG","CHPT","BLNK","BE"]},
-    {id:"fin",    label:"Finance",       tickers:["JPM","BAC","GS","SOFI","HOOD","AFRM","NU","UPST","SQ","PYPL"]},
-    {id:"space",  label:"Space",         tickers:["RKLB","SPCE","ASTR","PL","ASTS","GSAT","VSAT"]},
-    {id:"gaming", label:"Gaming",        tickers:["RBLX","EA","TTWO","DKNG","PENN","AGS","BETZ"]},
-    {id:"meme",   label:"Meme",          tickers:["GME","AMC","BBBY","CLOV","WKHS","BB","NOK","FFIE","MULN","NKLA"]},
+    {id:"all",    label:"Popular",   tickers:["TSLA","NVDA","AAPL","AMZN","GME","PLTR","AMD","SOFI","NIO","RIVN","MARA","RIOT","SMCI","RKLB","IONQ","UPST","HOOD"]},
+    {id:"tech",   label:"Tech",      tickers:["NVDA","AAPL","MSFT","GOOGL","META","AMD","QCOM","INTC","CRM","SNOW","NET","DDOG","SMCI","RKLB"]},
+    {id:"ai",     label:"AI",        tickers:["NVDA","MSFT","GOOGL","META","PLTR","SOUN","BBAI","IONQ","UPST","AI","AMBA"]},
+    {id:"med",    label:"Medical",   tickers:["PFE","MRNA","JNJ","ABBV","HIMS","NVAX","BNTX","SRPT","ACAD","AXSM","SAVA"]},
+    {id:"bio",    label:"Biotech",   tickers:["SRPT","RARE","ACAD","AXSM","SAVA","VRTX","REGN","ALNY","CRSP","BEAM","NTLA"]},
+    {id:"ev",     label:"EV",        tickers:["TSLA","RIVN","LCID","NIO","XPEV","LI","GM","F","NKLA","WKHS","FSR"]},
+    {id:"crypto", label:"Crypto",    tickers:["COIN","MARA","RIOT","MSTR","CLSK","HUT","CIFR","WULF","BTDR"]},
+    {id:"energy", label:"Energy",    tickers:["XOM","CVX","OXY","SLB","ENPH","FSLR","PLUG","CHPT","BLNK","BE"]},
+    {id:"fin",    label:"Finance",   tickers:["JPM","BAC","GS","SOFI","HOOD","AFRM","NU","UPST","SQ","PYPL"]},
+    {id:"space",  label:"Space",     tickers:["RKLB","SPCE","ASTR","PL","ASTS","GSAT","VSAT"]},
+    {id:"gaming", label:"Gaming",    tickers:["RBLX","EA","TTWO","DKNG","PENN","AGS","BETZ"]},
+    {id:"meme",   label:"Meme",      tickers:["GME","AMC","BBBY","CLOV","WKHS","BB","NOK","FFIE","MULN","NKLA"]},
   ];
 
   var catTickers = (CATS.filter(function(c) { return c.id === activeCat; })[0] || {}).tickers || [];
 
+  // Check if input looks like a ticker (1-5 uppercase letters only)
+  function looksLikeTicker(s) { return /^[A-Z]{1,5}$/.test(s.trim().toUpperCase()); }
+
   function handleSearch(sym) {
     if (!sym) return;
-    var next = [sym].concat(recents.filter(function(r) { return r !== sym; })).slice(0, 10);
+    var upper = sym.trim().toUpperCase();
+    var next = [upper].concat(recents.filter(function(r) { return r !== upper; })).slice(0, 10);
     setRecents(next); lsSet(RECENTS_KEY, next);
-    onTickerSelect(sym, null);
-    setQuery("");
+    setSuggestions(null); setQuery("");
+    onTickerSelect(upper, null);
+  }
+
+  function handleSubmit() {
+    var q = query.trim();
+    if (!q) return;
+    setResolveErr("");
+
+    // Direct ticker — skip AI lookup
+    if (looksLikeTicker(q)) { handleSearch(q); return; }
+
+    // Natural language — ask Claude to resolve to tickers
+    setResolving(true); setSuggestions(null);
+    callClaude(apiKey, {
+      max_tokens: 300,
+      messages: [{
+        role: "user",
+        content: "The user typed: \"" + q + "\"\n\nResolve this to stock ticker symbols. Return ONLY a JSON array of up to 5 objects, no markdown:\n[{\"symbol\":\"AAPL\",\"name\":\"Apple Inc.\",\"reason\":\"Why this matches the query\"}]\nIf it is a company name return that company. If it is a description return the best matching stocks. Return ONLY the JSON array."
+      }]
+    }).then(function(data) {
+      var txt = (data.content || []).filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("").trim();
+      var clean = txt.replace(/```json|```/g, "");
+      var s = clean.indexOf("["), e = clean.lastIndexOf("]");
+      if (s === -1) throw new Error("No results");
+      var parsed = JSON.parse(clean.slice(s, e+1));
+      if (!parsed.length) throw new Error("No matches found");
+      if (parsed.length === 1) {
+        // Only one result — open directly
+        handleSearch(parsed[0].symbol);
+      } else {
+        setSuggestions(parsed);
+      }
+      setResolving(false);
+    }).catch(function(ex) {
+      setResolveErr(ex.message || "Could not resolve. Try a ticker symbol.");
+      setResolving(false);
+    });
   }
 
   return (
@@ -1332,24 +1456,60 @@ function SearchView(props) {
       <header style={{padding:"max(env(safe-area-inset-top),20px) 20px 14px",background:"var(--bg)",position:"sticky",top:0,zIndex:100,borderBottom:"1px solid var(--bd)"}}>
         <div style={{marginBottom:14}}>
           <div style={{fontFamily:"var(--fd)",fontSize:28,fontWeight:500,letterSpacing:"-.3px",lineHeight:1}}>Stock Search</div>
-          <div style={{fontSize:11,color:"var(--t2)",marginTop:3}}>Full analysis for any ticker</div>
+          <div style={{fontSize:11,color:"var(--t2)",marginTop:3}}>Ticker, company name, or description</div>
         </div>
         <div style={{display:"flex",gap:8}}>
           <input ref={inputRef} value={query}
-            onChange={function(e) { setQuery(e.target.value.toUpperCase().replace(/[^A-Z]/g, "")); }}
-            onKeyDown={function(e) { if (e.key === "Enter") handleSearch(query); }}
-            placeholder="Enter ticker e.g. AAPL"
-            maxLength={5}
-            style={{flex:1,padding:"10px 14px",borderRadius:"var(--rs)",border:"1px solid var(--bd)",background:"var(--surface)",color:"var(--t1)",fontSize:15,outline:"none",fontFamily:"monospace",letterSpacing:".05em"}}
+            onChange={function(e) { setQuery(e.target.value); setSuggestions(null); setResolveErr(""); }}
+            onKeyDown={function(e) { if (e.key === "Enter") handleSubmit(); }}
+            placeholder="AAPL, Apple, EV stocks, beaten down biotech..."
+            style={{flex:1,padding:"10px 14px",borderRadius:"var(--rs)",border:"1px solid var(--bd)",background:"var(--surface)",color:"var(--t1)",fontSize:13,outline:"none",letterSpacing:"0"}}
           />
-          <button onClick={function() { handleSearch(query); }} disabled={!query.trim()} style={{padding:"10px 18px",borderRadius:"var(--rs)",border:"none",background:query.trim()?"var(--t1)":"var(--bd)",color:"var(--surface)",fontSize:13,fontWeight:500,cursor:query.trim()?"pointer":"not-allowed"}}>
-            Search
+          <button onClick={handleSubmit} disabled={!query.trim() || resolving}
+            style={{padding:"10px 18px",borderRadius:"var(--rs)",border:"none",background:(query.trim() && !resolving)?"var(--t1)":"var(--bd)",color:"var(--surface)",fontSize:13,fontWeight:500,cursor:(query.trim() && !resolving)?"pointer":"not-allowed",flexShrink:0}}>
+            {resolving ? <Spinner size={13}/> : "Search"}
           </button>
         </div>
+
+        {/* Resolving hint */}
+        {resolving && (
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",fontSize:12,color:"var(--t2)"}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:"var(--t3)",animation:"pulse 1.2s ease infinite",display:"inline-block"}}/>
+            Finding ticker for "{query}"...
+          </div>
+        )}
+        {resolveErr && (
+          <div style={{fontSize:11,color:"var(--red)",padding:"6px 0"}}>{resolveErr}</div>
+        )}
       </header>
 
       <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:16}}>
-        {recents.length > 0 && (
+
+        {/* Suggestions from natural language resolve */}
+        {suggestions && suggestions.length > 0 && (
+          <div style={{padding:"12px 20px 0"}}>
+            <SL>Results for "{query}"</SL>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {suggestions.map(function(s) {
+                return (
+                  <button key={s.symbol} onClick={function() { handleSearch(s.symbol); }}
+                    style={{display:"flex",alignItems:"center",gap:14,background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--r)",padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%",boxShadow:"var(--sh)"}}>
+                    <div style={{fontFamily:"var(--fd)",fontSize:26,fontWeight:500,letterSpacing:"-.5px",lineHeight:1,minWidth:52}}>{s.symbol}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:500,marginBottom:2}}>{s.name}</div>
+                      <div style={{fontSize:11,color:"var(--t2)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.reason}</div>
+                    </div>
+                    <span style={{fontSize:12,color:"var(--t3)",flexShrink:0}}>›</span>
+                  </button>
+                );
+              })}
+              <button onClick={function() { setSuggestions(null); setQuery(""); }} style={{fontSize:11,color:"var(--t3)",background:"none",border:"none",cursor:"pointer",padding:"4px 0",textAlign:"left"}}>Clear results</button>
+            </div>
+          </div>
+        )}
+
+        {/* Recent searches */}
+        {!suggestions && recents.length > 0 && (
           <div style={{padding:"16px 20px 0"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <SL>Recent Searches</SL>
@@ -1358,7 +1518,8 @@ function SearchView(props) {
             <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4}}>
               {recents.map(function(sym) {
                 return (
-                  <button key={sym} onClick={function() { handleSearch(sym); }} style={{display:"flex",alignItems:"center",gap:6,background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--r)",padding:"8px 14px",cursor:"pointer",flexShrink:0}}>
+                  <button key={sym} onClick={function() { handleSearch(sym); }}
+                    style={{display:"flex",alignItems:"center",gap:6,background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--r)",padding:"8px 14px",cursor:"pointer",flexShrink:0}}>
                     <span style={{fontFamily:"var(--fd)",fontSize:18,fontWeight:500,letterSpacing:"-.3px"}}>{sym}</span>
                   </button>
                 );
@@ -1367,31 +1528,37 @@ function SearchView(props) {
           </div>
         )}
 
-        <div>
-          <div style={{padding:"0 20px",marginBottom:12}}><SL>Browse by Category</SL></div>
-          <div style={{display:"flex",gap:8,overflowX:"auto",paddingLeft:20,paddingRight:20,paddingBottom:4,scrollbarWidth:"none"}}>
-            {CATS.map(function(cat) {
-              return (
-                <button key={cat.id} onClick={function() { setActiveCat(cat.id); }}
-                  style={{display:"flex",alignItems:"center",gap:5,padding:"7px 14px",borderRadius:99,border:"1px solid " + (activeCat===cat.id ? "var(--t1)" : "var(--bd)"),background:activeCat===cat.id ? "var(--t1)" : "var(--surface)",color:activeCat===cat.id ? "var(--surface)" : "var(--t2)",fontSize:12,fontWeight:activeCat===cat.id?600:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,boxShadow:"var(--sh)"}}>
-                  {cat.label}
-                </button>
-              );
-            })}
+        {/* Category browser */}
+        {!suggestions && (
+          <div>
+            <div style={{padding:"0 20px",marginBottom:12}}><SL>Browse by Category</SL></div>
+            <div style={{display:"flex",gap:8,overflowX:"auto",paddingLeft:20,paddingRight:20,paddingBottom:4,scrollbarWidth:"none"}}>
+              {CATS.map(function(cat) {
+                return (
+                  <button key={cat.id} onClick={function() { setActiveCat(cat.id); }}
+                    style={{display:"flex",alignItems:"center",gap:5,padding:"7px 14px",borderRadius:99,border:"1px solid " + (activeCat===cat.id ? "var(--t1)" : "var(--bd)"),background:activeCat===cat.id ? "var(--t1)" : "var(--surface)",color:activeCat===cat.id ? "var(--surface)" : "var(--t2)",fontSize:12,fontWeight:activeCat===cat.id?600:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,boxShadow:"var(--sh)"}}>
+                    {cat.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
-        <div style={{padding:"0 20px"}}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-            {catTickers.map(function(sym) {
-              return (
-                <button key={sym} onClick={function() { handleSearch(sym); }} style={{background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--rs)",padding:"12px 8px",cursor:"pointer",textAlign:"center",boxShadow:"var(--sh)"}}>
-                  <div style={{fontFamily:"var(--fd)",fontSize:20,fontWeight:500,letterSpacing:"-.3px"}}>{sym}</div>
-                </button>
-              );
-            })}
+        {!suggestions && (
+          <div style={{padding:"0 20px"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+              {catTickers.map(function(sym) {
+                return (
+                  <button key={sym} onClick={function() { handleSearch(sym); }}
+                    style={{background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--rs)",padding:"12px 8px",cursor:"pointer",textAlign:"center",boxShadow:"var(--sh)"}}>
+                    <div style={{fontFamily:"var(--fd)",fontSize:20,fontWeight:500,letterSpacing:"-.3px"}}>{sym}</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
