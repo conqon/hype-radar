@@ -31,10 +31,31 @@ module.exports = async function(req, res) {
                           : enc === "br"   ? zlib.brotliDecompressSync(buf).toString("utf8")
                           : buf.toString("utf8");
                 const parsed = JSON.parse(raw);
-                const arr = Array.isArray(parsed) ? parsed
+                const raw_arr = Array.isArray(parsed) ? parsed
                   : Array.isArray(parsed.data) ? parsed.data
                   : Object.values(parsed).find(v => Array.isArray(v)) || [];
-                const sorted = arr
+
+                // Handle nested Senate format: [{senator, transactions:[{ticker,...}]}]
+                // vs flat format: [{ticker, senator, ...}]
+                let flat = [];
+                if (raw_arr.length && Array.isArray(raw_arr[0].transactions)) {
+                  // Nested — flatten filings into individual trades
+                  raw_arr.forEach(f => {
+                    const name = f.senator || [f.first_name, f.last_name].filter(Boolean).join(" ") || "Unknown";
+                    (f.transactions || []).forEach(tx => {
+                      flat.push(Object.assign({}, tx, {
+                        senator: name,
+                        name: name,
+                        disclosure_date: f.date_recieved || f.disclosure_date || "",
+                      }));
+                    });
+                  });
+                } else {
+                  // Already flat
+                  flat = raw_arr;
+                }
+
+                const sorted = flat
                   .filter(t => { const tk=(t.ticker||"").trim().toUpperCase(); return tk&&tk!=="--"&&/^[A-Z]{1,5}$/.test(tk); })
                   .sort((a,b) => new Date(b.transaction_date||b.disclosure_date||0)-new Date(a.transaction_date||a.disclosure_date||0))
                   .slice(0,1500);
