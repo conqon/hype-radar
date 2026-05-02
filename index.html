@@ -746,21 +746,7 @@ function ScreenerView(props) {
           })}
         </div>
 
-        {currentScreen && <div style={{fontSize:11,color:"var(--t2)",padding:"6px 0 8px"}}>{currentScreen.desc}</div>}
-
-        {/* Price filter */}
-        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6,scrollbarWidth:"none"}}>
-          {PRICE_RANGES.map(function(r) {
-            return <FPill key={r.id} active={priceFilter === r.id} onClick={function() { setPriceFilter(r.id); }}>{r.label}</FPill>;
-          })}
-        </div>
-
-        {/* Sort order */}
-        <div style={{display:"flex",gap:6,alignItems:"center",paddingBottom:10,borderBottom:"1px solid var(--bd)"}}>
-          <span style={{fontSize:10,fontWeight:600,letterSpacing:".08em",textTransform:"uppercase",color:"var(--t3)",flexShrink:0}}>Sort:</span>
-          <FPill active={sortOrder === "high"} onClick={function() { setSortOrder("high"); }}>Highest Score</FPill>
-          <FPill active={sortOrder === "low"}  onClick={function() { setSortOrder("low");  }}>Lowest Score</FPill>
-        </div>
+        {currentScreen && <div style={{fontSize:11,color:"var(--t2)",padding:"6px 0 10px",borderBottom:"1px solid var(--bd)"}}>{currentScreen.desc}</div>}
 
         {err && (
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:"var(--rs)",background:"var(--rbg)",border:"1px solid var(--rbd)",margin:"8px 0",fontSize:12,color:"var(--red)"}}>
@@ -771,6 +757,25 @@ function ScreenerView(props) {
       </header>
 
       <div style={{padding:"12px 20px"}}>
+
+        {/* Price + Sort filters */}
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14,padding:"12px 14px",background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--r)",boxShadow:"var(--sh)"}}>
+          <div>
+            <div style={{fontSize:10,fontWeight:600,letterSpacing:".08em",textTransform:"uppercase",color:"var(--t3)",marginBottom:6}}>Price Range</div>
+            <div style={{display:"flex",gap:6,overflowX:"auto",scrollbarWidth:"none"}}>
+              {PRICE_RANGES.map(function(r) {
+                return <FPill key={r.id} active={priceFilter === r.id} onClick={function() { setPriceFilter(r.id); }}>{r.label}</FPill>;
+              })}
+            </div>
+          </div>
+          <div style={{borderTop:"1px solid var(--bd)",paddingTop:8}}>
+            <div style={{fontSize:10,fontWeight:600,letterSpacing:".08em",textTransform:"uppercase",color:"var(--t3)",marginBottom:6}}>Sort By</div>
+            <div style={{display:"flex",gap:6}}>
+              <FPill active={sortOrder === "high"} onClick={function() { setSortOrder("high"); }}>Highest Score First</FPill>
+              <FPill active={sortOrder === "low"}  onClick={function() { setSortOrder("low");  }}>Lowest Score First</FPill>
+            </div>
+          </div>
+        </div>
         {loading && !currentResults.length && (
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {[0,1,2,3,4].map(function(i) { return <div key={i} className="sk" style={{height:120,animationDelay:(i*.08)+"s"}}/>; })}
