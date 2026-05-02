@@ -101,7 +101,7 @@ Return 8 opportunities for the given screen type as a JSON array with no markdow
 conviction: high|medium|low. opportunity_score 0-100. Return ONLY the JSON array.`;
 
 /* ── API ───────────────────────────────────────────── */
-async function callClaude(apiKey, body) {
+async function callClaude(body) {
   const ctrl = new AbortController();
   const timer = setTimeout(function() { ctrl.abort(); }, 60000);
   var res;
@@ -109,7 +109,7 @@ async function callClaude(apiKey, body) {
     res = await fetch("/api/claude", {
       method: "POST",
       signal: ctrl.signal,
-      headers: {"content-type":"application/json","x-api-key":apiKey},
+      headers: {"content-type":"application/json"},
       body: JSON.stringify(Object.assign({model:"claude-haiku-4-5-20251001"}, body)),
     });
   } catch(e) {
@@ -119,7 +119,7 @@ async function callClaude(apiKey, body) {
   }
   clearTimeout(timer);
   var raw = await res.text();
-  if (!raw || raw.trim() === "") throw new Error("Empty response (HTTP " + res.status + "). Check your API key.");
+  if (!raw || raw.trim() === "") throw new Error("Empty response (HTTP " + res.status + ").");
   var data;
   try { data = JSON.parse(raw); } catch(e) { throw new Error("Server error (HTTP " + res.status + "): " + raw.slice(0,120)); }
   if (data.error) throw new Error(data.error.message || "API error");
@@ -315,60 +315,9 @@ function Section(props) {
 }
 
 /* ── Setup Screen ──────────────────────────────────── */
-function SetupScreen(props) {
-  var valState = useState(""); var val = valState[0], setVal = valState[1];
-  var errState = useState(""); var err = errState[0], setErr = errState[1];
-  var testingState = useState(false); var testing = testingState[0], setTesting = testingState[1];
-
-  function save() {
-    var key = val.trim();
-    if (!key.startsWith("sk-ant-")) { setErr("Key should start with sk-ant-"); return; }
-    setTesting(true); setErr("");
-    callClaude(key, {max_tokens:10, messages:[{role:"user",content:"hi"}]}).then(function(data) {
-      if (!data.content) throw new Error("Unexpected response");
-      lsSet(APIKEY_KEY, key);
-      props.onSave(key);
-    }).catch(function(e) {
-      setErr(e.message || "Invalid key or connection error.");
-      setTesting(false);
-    });
-  }
-
-  return (
-    <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"32px 24px",background:"var(--bg)"}}>
-      <div style={{fontFamily:"var(--fd)",fontSize:36,fontWeight:500,letterSpacing:"-.5px",marginBottom:6}}>Hype Radar</div>
-      <div style={{fontSize:13,color:"var(--t2)",marginBottom:32,lineHeight:1.6}}>Retail sentiment · Congressional trades · Stock research</div>
-      <div style={{background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--r)",padding:24,boxShadow:"var(--sh)"}}>
-        <div style={{fontSize:15,fontWeight:500,marginBottom:6}}>Enter your Anthropic API Key</div>
-        <p style={{fontSize:12,color:"var(--t2)",marginBottom:16,lineHeight:1.65}}>Stored only on this device. Sent directly to Anthropic, never shared.</p>
-        <div style={{background:"var(--s2)",border:"1px solid var(--bd)",borderRadius:"var(--rs)",padding:"12px 14px",marginBottom:16,fontSize:12,color:"var(--t2)",lineHeight:1.65}}>
-          <strong style={{color:"var(--t1)"}}>Get a free key at console.anthropic.com</strong><br/>
-          Sign up then go to API Keys and Create Key
-        </div>
-        <input
-          value={val} type="password"
-          onChange={function(e) { setVal(e.target.value); setErr(""); }}
-          onKeyDown={function(e) { if (e.key === "Enter") save(); }}
-          placeholder="sk-ant-api03-..."
-          style={{width:"100%",padding:"10px 12px",borderRadius:"var(--rs)",border:"1px solid " + (err ? "var(--rbd)" : "var(--bd)"),background:"var(--bg)",color:"var(--t1)",fontSize:13,outline:"none",fontFamily:"monospace",marginBottom:err?6:14}}
-        />
-        {err && <div style={{fontSize:11,color:"var(--red)",marginBottom:12}}>{err}</div>}
-        <button
-          onClick={save}
-          disabled={testing || !val.trim()}
-          style={{width:"100%",padding:12,borderRadius:"var(--rs)",border:"none",background:(testing || !val.trim()) ? "var(--bd)" : "var(--t1)",color:"var(--surface)",fontSize:13,fontWeight:500,cursor:(testing || !val.trim()) ? "not-allowed" : "pointer"}}
-        >
-          {testing ? "Verifying..." : "Save & Continue"}
-        </button>
-      </div>
-      <p style={{fontSize:11,color:"var(--t3)",textAlign:"center",marginTop:16,lineHeight:1.6}}>Each scan approx $0.01-0.05 · Congressional data is always free</p>
-    </div>
-  );
-}
-
 /* ── Stock Drawer ──────────────────────────────────── */
 function StockDrawer(props) {
-  var ticker = props.ticker, apiKey = props.apiKey, context = props.context, onClose = props.onClose;
+  var ticker = props.ticker, context = props.context, onClose = props.onClose;
   var dataState = useState(null); var data = dataState[0], setData = dataState[1];
   var loadingState = useState(true); var loading = loadingState[0], setLoading = loadingState[1];
   var errState = useState(""); var err = errState[0], setErr = errState[1];
@@ -386,7 +335,7 @@ function StockDrawer(props) {
 
   function load() {
     setLoading(true); setErr(""); setData(null);
-    callClaude(apiKey, {
+    callClaude({
       max_tokens: 4000,
       system: STOCK_PROMPT,
       messages: [{role:"user", content:"Analyze ticker: " + ticker + ". Provide company info, estimated recent price history, trading signals, known catalysts, insider activity, risk flags, and key stats."}],
@@ -642,7 +591,7 @@ function StockDrawer(props) {
 
 /* ── Screener View ─────────────────────────────────── */
 function ScreenerView(props) {
-  var apiKey = props.apiKey, onTickerSelect = props.onTickerSelect, visible = props.visible;
+  var onTickerSelect = props.onTickerSelect, visible = props.visible;
   var activeState = useState("oversold"); var activeScreen = activeState[0], setActiveScreen = activeState[1];
   var resultsState = useState({}); var results = resultsState[0], setResults = resultsState[1];
   var loadingState = useState(false); var loading = loadingState[0], setLoading = loadingState[1];
@@ -673,7 +622,7 @@ function ScreenerView(props) {
     var screenType = SCREENER_TYPES.filter(function(s) { return s.id === screenId; })[0];
     var hint = priceHint();
     var content = "Run the " + screenType.label + " screen: " + screenType.desc + ". Find 8 best broken stock healthy company opportunities." + (hint ? " " + hint + "." : "") + " Return JSON array only.";
-    callClaude(apiKey, {
+    callClaude({
       max_tokens: 3000,
       system: SCREENER_PROMPT,
       messages: [{role:"user", content:content}],
@@ -871,7 +820,7 @@ function ScreenerView(props) {
 
 /* ── Feed View ─────────────────────────────────────── */
 function FeedView(props) {
-  var apiKey = props.apiKey, onTickerSelect = props.onTickerSelect, visible = props.visible;
+  var onTickerSelect = props.onTickerSelect, visible = props.visible;
   var sourcesState = useState(function() { return lsGet(SOURCES_KEY, DEFAULT_SOURCES); });
   var sources = sourcesState[0], setSources = sourcesState[1];
   var analysisState = useState(null); var analysis = analysisState[0], setAnalysis = analysisState[1];
@@ -898,7 +847,7 @@ function FeedView(props) {
     var target = override || sources;
     setStage("analyzing"); setStageTxt("Analyzing sentiment..."); setErr("");
     var srcList = target.map(function(s) { return s.type === "reddit" ? "r/" + s.id : s.label; }).join(", ");
-    callClaude(apiKey, {
+    callClaude({
       max_tokens: 2000,
       system: ANALYSIS_PROMPT,
       messages: [{role:"user", content:"Analyze current retail investor sentiment across: " + srcList + ". Return JSON."}],
@@ -1161,11 +1110,6 @@ function FeedView(props) {
               </div>
             </div>
 
-            <div style={{background:"var(--surface)",border:"1px solid var(--bd)",borderRadius:"var(--r)",padding:16,boxShadow:"var(--sh)"}}>
-              <div style={{fontSize:13,fontWeight:500,marginBottom:6}}>API Key</div>
-              <div style={{fontSize:12,color:"var(--t2)",marginBottom:12,lineHeight:1.5}}>Stored locally. Sent only to Anthropic.</div>
-              <button onClick={function() { if (window.confirm("Clear API key?")) { localStorage.removeItem(APIKEY_KEY); window.location.reload(); } }} style={{width:"100%",padding:"10px",borderRadius:"var(--rs)",border:"1px solid var(--rbd)",background:"var(--rbg)",color:"var(--red)",fontSize:12,fontWeight:500,cursor:"pointer"}}>Clear API Key</button>
-            </div>
             <p style={{fontSize:11,color:"var(--t3)",textAlign:"center",lineHeight:1.6}}>Sources saved locally. Web sources analyzed by AI.</p>
           </div>
         )}
@@ -1176,7 +1120,7 @@ function FeedView(props) {
 
 /* ── Congress View ─────────────────────────────────── */
 function CongressView(props) {
-  var apiKey = props.apiKey, onTickerSelect = props.onTickerSelect, visible = props.visible;
+  var onTickerSelect = props.onTickerSelect, visible = props.visible;
   var tradesState = useState([]); var trades = tradesState[0], setTrades = tradesState[1];
   var loadingState = useState(true); var loading = loadingState[0], setLoading = loadingState[1];
   var errState = useState(""); var err = errState[0], setErr = errState[1];
@@ -1191,7 +1135,7 @@ function CongressView(props) {
     if (hasFetched.current) return;
     hasFetched.current = true;
 
-    callClaude(apiKey, {
+    callClaude({
       max_tokens: 4000,
       messages: [{
         role: "user",
@@ -1360,7 +1304,7 @@ function CongressView(props) {
 
 /* ── Search View ───────────────────────────────────── */
 function SearchView(props) {
-  var apiKey = props.apiKey, onTickerSelect = props.onTickerSelect, visible = props.visible;
+  var onTickerSelect = props.onTickerSelect, visible = props.visible;
   var queryState = useState(""); var query = queryState[0], setQuery = queryState[1];
   var recentsState = useState(function() { return lsGet(RECENTS_KEY, []); });
   var recents = recentsState[0], setRecents = recentsState[1];
@@ -1411,7 +1355,7 @@ function SearchView(props) {
 
     // Natural language — ask Claude to resolve to tickers
     setResolving(true); setSuggestions(null);
-    callClaude(apiKey, {
+    callClaude({
       max_tokens: 300,
       messages: [{
         role: "user",
@@ -1552,8 +1496,6 @@ function SearchView(props) {
 
 /* ── Root App ──────────────────────────────────────── */
 function App() {
-  var apiKeyState = useState(function() { return lsGet(APIKEY_KEY, "") || ""; });
-  var apiKey = apiKeyState[0], setApiKey = apiKeyState[1];
   var navState = useState("screener"); var nav = navState[0], setNav = navState[1];
   var drawerTickerState = useState(null); var drawerTicker = drawerTickerState[0], setDrawerTicker = drawerTickerState[1];
   var drawerContextState = useState(null); var drawerContext = drawerContextState[0], setDrawerContext = drawerContextState[1];
@@ -1561,14 +1503,12 @@ function App() {
   function openTicker(sym, ctx) { setDrawerTicker(sym); setDrawerContext(ctx); }
   function closeTicker() { setDrawerTicker(null); setDrawerContext(null); }
 
-  if (!apiKey) return <SetupScreen onSave={function(key) { lsSet(APIKEY_KEY, key); setApiKey(key); }}/>;
-
   return (
     <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",paddingBottom:"calc(var(--nav) + env(safe-area-inset-bottom))",background:"var(--bg)"}}>
-      <ScreenerView apiKey={apiKey} onTickerSelect={openTicker} visible={nav==="screener"}/>
-      <FeedView     apiKey={apiKey} onTickerSelect={openTicker} visible={nav==="feed"}/>
-      <CongressView apiKey={apiKey}       onTickerSelect={openTicker} visible={nav==="congress"}/>
-      <SearchView   apiKey={apiKey} onTickerSelect={openTicker} visible={nav==="search"}/>
+      <ScreenerView onTickerSelect={openTicker} visible={nav==="screener"}/>
+      <FeedView     onTickerSelect={openTicker} visible={nav==="feed"}/>
+      <CongressView onTickerSelect={openTicker} visible={nav==="congress"}/>
+      <SearchView   onTickerSelect={openTicker} visible={nav==="search"}/>
 
       <nav style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"var(--surface)",borderTop:"1px solid var(--bd)",display:"flex",zIndex:200,paddingBottom:"env(safe-area-inset-bottom)",boxShadow:"0 -4px 20px rgba(0,0,0,.06)"}}>
         {[{id:"screener",label:"Screener"},{id:"feed",label:"Feed"},{id:"congress",label:"Congress"},{id:"search",label:"Search"}].map(function(t) {
@@ -1581,7 +1521,7 @@ function App() {
         })}
       </nav>
 
-      {drawerTicker && <StockDrawer ticker={drawerTicker} apiKey={apiKey} context={drawerContext} onClose={closeTicker}/>}
+      {drawerTicker && <StockDrawer ticker={drawerTicker} context={drawerContext} onClose={closeTicker}/>}
     </div>
   );
 }
